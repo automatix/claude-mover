@@ -9,7 +9,10 @@
       "Bash(git checkout *)",
       "Bash(python claude_mover.py --help)",
       "Bash(git push *)",
-      "Bash(gh pr create --title 'feat: implement claude-mover CLI tool' --body ' *)"
+      "Bash(gh pr create --title 'feat: implement claude-mover CLI tool' --body ' *)",
+      "Bash(gh pr *)",
+      "Bash(git pull *)",
+      "Bash(git stash *)"
     ]
   }
 }
