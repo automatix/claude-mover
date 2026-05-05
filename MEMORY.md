@@ -11,3 +11,33 @@
 - `.gitignore`, `README.md`, `MEMORY.md` erstellt.
 
 **Result:** Projekt ist versioniert und bereit für die Implementierung.
+
+## `2026-05-06` – Anforderungserhebung
+
+**Request:** Anforderungen für das Tool interaktiv erheben.
+
+**Done:** Vollständige Anforderungen erhoben.
+
+**Ergebnis:**
+
+| # | Anforderung | Entscheidung |
+|---|---|---|
+| 1 | Plattform | Windows |
+| 2 | Interface | CLI |
+| 3 | Sprache | Python, Standalone-Script |
+| 4 | Aufruf | `claude-mover <quelle> <ziel>` |
+| 5 | Pfadformate | CMD-Style, Git-Bash-Style, Claude-Dashed-Style |
+| 6 | Dry-run | `--dry-run`-Flag |
+| 7 | Backup | Vor dem Verschieben, Cleanup nach Erfolg |
+| 8 | Ziel existiert | Abbruch mit Fehlermeldung + Handlungsanweisung |
+| 9 | Elternverzeichnis fehlt | User fragen: abbrechen / anlegen / selbst anlegen + retry |
+| 10 | Quell-Validierung | Ordner + Claude-Kontext müssen existieren |
+| 11 | Ziel-Validierung | Claude-Kontext darf nicht bereits existieren |
+| 12 | Config-Patching | Alle Strings in `.claude/settings.json`, `.mcp.json` |
+| 13 | `history.jsonl` | Pfadreferenzen aktualisieren |
+| 14 | Logging | `%LOCALAPPDATA%\ClaudeMover\logs\` |
+| 15 | Abschluss | Zusammenfassung: Sessions, gepatchte Dateien, Logpfad |
+
+**Zurückgestellte Features:**
+- **Merge-Modus:** Zusammenführen von Claude-Session-Historien zweier verwandter Projektpfade in ein Zielverzeichnis.
+- **pip-Package:** Distribution als installierbares Python-Package (`pip install claude-mover`).
