@@ -1,0 +1,434 @@
+#!/usr/bin/env python3
+"""claude-mover: safely relocates Claude Code project folders on Windows."""
+
+import argparse
+import logging
+import os
+import re
+import shutil
+import sys
+from datetime import datetime
+from pathlib import Path
+from typing import Optional
+
+APP_NAME = "ClaudeMover"
+CLAUDE_DIR = Path.home() / ".claude"
+PROJECTS_DIR = CLAUDE_DIR / "projects"
+HISTORY_FILE = CLAUDE_DIR / "history.jsonl"
+LOG_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / APP_NAME / "logs"
+
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+
+def setup_logging(dry_run: bool) -> Path:
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    log_file = LOG_DIR / f"claude-mover-{datetime.now():%Y-%m-%d_%H-%M-%S}.log"
+
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=[
+            logging.FileHandler(log_file, encoding="utf-8"),
+            logging.StreamHandler(sys.stdout),
+        ],
+    )
+
+    if dry_run:
+        logging.info("[DRY RUN] No changes will be made.")
+
+    return log_file
+
+
+# ---------------------------------------------------------------------------
+# Path utilities
+# ---------------------------------------------------------------------------
+
+def encode_path(path: Path) -> str:
+    """Encode a Windows absolute path to Claude's dashed directory name.
+
+    Example: D:\\workspace\\myapp  ->  D--workspace-myapp
+    """
+    s = str(path.resolve())
+    # Drive colon + backslash -> double dash
+    s = re.sub(r'^([A-Za-z]):\\', lambda m: m.group(1).upper() + "--", s)
+    s = s.replace("\\", "-")
+    return s
+
+
+def _decode_dashed_naive(dashed: str) -> Optional[Path]:
+    m = re.match(r'^([A-Za-z])--(.+)$', dashed)
+    if not m:
+        return None
+    drive = m.group(1).upper()
+    rest = m.group(2).replace("-", "\\")
+    return Path(f"{drive}:\\{rest}")
+
+
+def normalize_path(path_str: str) -> Path:
+    """Normalize any of the three supported path formats to a Windows Path.
+
+    Accepted formats:
+      - CMD style:          C:\\workspace\\myapp
+      - Git Bash style:     /c/workspace/myapp
+      - Claude dashed:      C--workspace-myapp
+    """
+    s = path_str.strip().rstrip("/\\")
+
+    # CMD style
+    if re.match(r'^[A-Za-z]:[/\\]', s):
+        return Path(s)
+
+    # Git Bash style: /c/rest/of/path
+    m = re.match(r'^/([A-Za-z])/(.+)$', s)
+    if m:
+        drive = m.group(1).upper()
+        rest = m.group(2).replace("/", "\\")
+        return Path(f"{drive}:\\{rest}")
+
+    # Claude dashed style: C--workspace-myapp
+    if re.match(r'^[A-Za-z]--', s):
+        # Prefer a match against known Claude context dirs to resolve dash ambiguity
+        if PROJECTS_DIR.exists():
+            for ctx_dir in PROJECTS_DIR.iterdir():
+                if ctx_dir.name.lower() == s.lower():
+                    decoded = _decode_dashed_naive(ctx_dir.name)
+                    if decoded:
+                        return decoded
+        decoded = _decode_dashed_naive(s)
+        if decoded:
+            return decoded
+
+    # Fallback: resolve relative path
+    return Path(s).resolve()
+
+
+# ---------------------------------------------------------------------------
+# Path variant helpers for string patching
+# ---------------------------------------------------------------------------
+
+def _path_variants(path: Path) -> list[str]:
+    """Return all string representations of a path that may appear in files."""
+    p = path.resolve()
+    drive = p.drive  # e.g. 'D:'
+    rest_backslash = str(p)[len(drive):]           # e.g. '\\workspace\\myapp'
+    rest_forward = rest_backslash.replace("\\", "/")  # e.g. '/workspace/myapp'
+    drive_letter = drive[0]
+
+    return [
+        str(p),                                             # D:\workspace\myapp
+        str(p).replace("\\", "/"),                         # D:/workspace/myapp
+        f"/{drive_letter.lower()}{rest_forward}",          # /d/workspace/myapp
+        f"/{drive_letter.upper()}{rest_forward}",          # /D/workspace/myapp
+        encode_path(p),                                     # D--workspace-myapp
+    ]
+
+
+def patch_content(content: str, old_path: Path, new_path: Path) -> str:
+    """Replace all known representations of old_path with new_path in content."""
+    old_variants = _path_variants(old_path)
+    new_variants = _path_variants(new_path)
+
+    result = content
+    for old_v, new_v in zip(old_variants, new_variants):
+        result = re.sub(re.escape(old_v), lambda _: new_v, result, flags=re.IGNORECASE)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Validation
+# ---------------------------------------------------------------------------
+
+def validate_source(path: Path) -> Path:
+    """Validate source path and return its Claude context directory."""
+    if not path.exists():
+        logging.error(f"Source folder does not exist: {path}")
+        logging.error("Verify the path and try again.")
+        sys.exit(1)
+    if not path.is_dir():
+        logging.error(f"Source path is not a directory: {path}")
+        sys.exit(1)
+
+    encoded = encode_path(path)
+    ctx = PROJECTS_DIR / encoded
+    if not ctx.exists():
+        logging.error(f"No Claude context found for: {path}")
+        logging.error(f"Expected: {ctx}")
+        logging.error("This folder does not appear to be a Claude Code project.")
+        sys.exit(1)
+
+    return ctx
+
+
+def validate_target(path: Path) -> None:
+    """Validate that target path and its Claude context do not already exist."""
+    if path.exists():
+        logging.error(f"Target folder already exists: {path}")
+        logging.error("Choose a different target path or remove the existing folder first.")
+        sys.exit(1)
+
+    encoded = encode_path(path)
+    ctx = PROJECTS_DIR / encoded
+    if ctx.exists():
+        logging.error(f"A Claude context already exists for target path: {path}")
+        logging.error(f"Conflicting context: {ctx}")
+        logging.error("Remove or relocate the existing context before proceeding.")
+        sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# Parent directory
+# ---------------------------------------------------------------------------
+
+def ensure_parent(path: Path, dry_run: bool) -> None:
+    """Ensure the parent directory of path exists; prompt the user if it does not."""
+    parent = path.parent
+    if parent.exists():
+        return
+
+    print(f"\nThe parent directory does not exist: {parent}")
+    print("Options:")
+    print("  1  Abort")
+    print("  2  Create the missing directories automatically")
+    print("  3  Create them yourself, then retry")
+
+    while True:
+        choice = input("Your choice [1/2/3]: ").strip()
+        if choice == "1":
+            logging.info("Aborted by user (missing parent directory).")
+            sys.exit(0)
+        elif choice == "2":
+            if not dry_run:
+                parent.mkdir(parents=True, exist_ok=True)
+                logging.info(f"Created: {parent}")
+            else:
+                logging.info(f"[DRY RUN] Would create: {parent}")
+            return
+        elif choice == "3":
+            input(f"\nPlease create '{parent}', then press Enter to retry...")
+            if parent.exists():
+                logging.info("Parent directory found. Continuing.")
+                return
+            print(f"Directory still missing: {parent}")
+        else:
+            print("Please enter 1, 2, or 3.")
+
+
+# ---------------------------------------------------------------------------
+# Backup
+# ---------------------------------------------------------------------------
+
+def backup_context(ctx_dir: Path, dry_run: bool) -> Path:
+    backup = ctx_dir.with_name(ctx_dir.name + f".bak-{datetime.now():%Y%m%d-%H%M%S}")
+    if not dry_run:
+        shutil.copytree(ctx_dir, backup)
+        logging.info(f"Backup created: {backup}")
+    else:
+        logging.info(f"[DRY RUN] Would create backup: {backup}")
+    return backup
+
+
+def restore_backup(backup: Path, ctx_dir: Path) -> None:
+    if backup.exists() and not ctx_dir.exists():
+        backup.rename(ctx_dir)
+        logging.info(f"Context restored from backup: {ctx_dir}")
+
+
+def remove_backup(backup: Path, dry_run: bool) -> None:
+    if not dry_run:
+        if backup.exists():
+            shutil.rmtree(backup)
+            logging.info("Backup removed.")
+    else:
+        logging.info("[DRY RUN] Would remove backup.")
+
+
+# ---------------------------------------------------------------------------
+# Patching
+# ---------------------------------------------------------------------------
+
+def patch_file(file_path: Path, old_path: Path, new_path: Path, dry_run: bool) -> int:
+    """Patch a single file. Returns number of changed lines (jsonl) or 1/0 for json."""
+    text = file_path.read_text(encoding="utf-8")
+    patched = patch_content(text, old_path, new_path)
+    if patched == text:
+        return 0
+    if not dry_run:
+        file_path.write_text(patched, encoding="utf-8")
+    return text.count("\n") - text.replace(
+        text, patched
+    ).count("\n") if text != patched else sum(
+        1 for a, b in zip(text.splitlines(), patched.splitlines()) if a != b
+    ) or 1
+
+
+def patch_jsonl(file_path: Path, old_path: Path, new_path: Path, dry_run: bool) -> int:
+    """Patch a .jsonl file line by line. Returns number of changed lines."""
+    lines = file_path.read_text(encoding="utf-8").splitlines(keepends=True)
+    changed = 0
+    patched_lines = []
+    for line in lines:
+        new_line = patch_content(line, old_path, new_path)
+        if new_line != line:
+            changed += 1
+        patched_lines.append(new_line)
+    if changed and not dry_run:
+        file_path.write_text("".join(patched_lines), encoding="utf-8")
+    return changed
+
+
+# ---------------------------------------------------------------------------
+# Migration
+# ---------------------------------------------------------------------------
+
+def migrate(source: Path, target: Path, dry_run: bool) -> dict:
+    """Execute the full migration. Returns a summary dict."""
+    source = source.resolve()
+    target = target.resolve()
+
+    summary = {
+        "source": str(source),
+        "target": str(target),
+        "sessions_migrated": 0,
+        "config_files_patched": [],
+        "history_lines_patched": 0,
+    }
+
+    # --- Validate ---
+    source_ctx = validate_source(source)
+    validate_target(target)
+    ensure_parent(target, dry_run)
+
+    target_encoded = encode_path(target)
+    target_ctx = PROJECTS_DIR / target_encoded
+
+    logging.info(f"Source: {source}")
+    logging.info(f"Source context: {source_ctx}")
+    logging.info(f"Target: {target}")
+    logging.info(f"Target context: {target_ctx}")
+
+    # --- Backup ---
+    backup = backup_context(source_ctx, dry_run)
+
+    try:
+        # Step 1: Rename Claude context directory
+        logging.info(f"Renaming context directory ...")
+        if not dry_run:
+            source_ctx.rename(target_ctx)
+        else:
+            logging.info(f"[DRY RUN] Would rename: {source_ctx} -> {target_ctx}")
+
+        # Step 2: Patch path references in session files
+        ctx_for_sessions = target_ctx if not dry_run else source_ctx
+        jsonl_files = list(ctx_for_sessions.glob("*.jsonl"))
+        logging.info(f"Patching {len(jsonl_files)} session file(s) ...")
+        for jf in jsonl_files:
+            changed = patch_jsonl(jf, source, target, dry_run)
+            summary["sessions_migrated"] += 1
+            if changed:
+                logging.info(f"  {jf.name}: {changed} line(s) updated")
+
+        # Step 3: Move project folder
+        logging.info(f"Moving project folder ...")
+        if not dry_run:
+            shutil.move(str(source), str(target))
+        else:
+            logging.info(f"[DRY RUN] Would move: {source} -> {target}")
+
+        # Step 4: Patch config files inside moved project
+        config_candidates = [
+            target / ".claude" / "settings.json",
+            target / ".claude" / "settings.local.json",
+            target / ".mcp.json",
+        ]
+        for cf in config_candidates:
+            if cf.exists():
+                changed = patch_file(cf, source, target, dry_run)
+                if changed:
+                    summary["config_files_patched"].append(str(cf))
+                    logging.info(f"Patched: {cf}")
+
+        # Step 5: Patch history.jsonl
+        if HISTORY_FILE.exists():
+            changed = patch_jsonl(HISTORY_FILE, source, target, dry_run)
+            summary["history_lines_patched"] = changed
+            if changed:
+                logging.info(f"history.jsonl: {changed} line(s) updated")
+
+        # Step 6: Remove backup
+        remove_backup(backup, dry_run)
+
+    except Exception:
+        logging.error("Migration failed. Restoring from backup ...")
+        if not dry_run:
+            restore_backup(backup, source_ctx)
+        raise
+
+    return summary
+
+
+# ---------------------------------------------------------------------------
+# Summary
+# ---------------------------------------------------------------------------
+
+def print_summary(summary: dict, log_file: Path, dry_run: bool) -> None:
+    prefix = "[DRY RUN] " if dry_run else ""
+    print("\n" + "=" * 60)
+    print(f"{prefix}Migration {'preview' if dry_run else 'complete'}.")
+    print(f"  Source:                {summary['source']}")
+    print(f"  Target:                {summary['target']}")
+    print(f"  Sessions migrated:     {summary['sessions_migrated']}")
+    print(f"  History lines patched: {summary['history_lines_patched']}")
+    if summary["config_files_patched"]:
+        print(f"  Config files patched:  {len(summary['config_files_patched'])}")
+        for cf in summary["config_files_patched"]:
+            print(f"    - {cf}")
+    print(f"  Log file:              {log_file}")
+    print("=" * 60)
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        prog="claude-mover",
+        description="Safely move a Claude Code project folder, preserving session history.",
+    )
+    parser.add_argument(
+        "source",
+        help="Source project path (CMD, Git Bash, or Claude dashed format)",
+    )
+    parser.add_argument(
+        "target",
+        help="Target project path (CMD, Git Bash, or Claude dashed format)",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be done without making any changes",
+    )
+    args = parser.parse_args()
+
+    log_file = setup_logging(args.dry_run)
+
+    source = normalize_path(args.source)
+    target = normalize_path(args.target)
+
+    logging.info(f"Resolved source: {source}")
+    logging.info(f"Resolved target: {target}")
+
+    try:
+        summary = migrate(source, target, args.dry_run)
+        print_summary(summary, log_file, args.dry_run)
+    except SystemExit:
+        raise
+    except Exception as e:
+        logging.error(f"Unexpected error: {e}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
