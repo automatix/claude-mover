@@ -41,3 +41,15 @@
 **Zurückgestellte Features:**
 - **Merge-Modus:** Zusammenführen von Claude-Session-Historien zweier verwandter Projektpfade in ein Zielverzeichnis.
 - **pip-Package:** Distribution als installierbares Python-Package (`pip install claude-mover`).
+
+## `2026-05-06` – Merge, SemVer-Einführung, Release
+
+**Request:** PR mergen, SemVer einführen, global merken.
+
+**Done:**
+- PR [#2](https://github.com/automatix/claude-mover/pull/2) gemergt.
+- SemVer eingeführt: `v0.1.0` (erster funktionierender Minor-Release, noch kein stabiles API).
+- GitHub Release [v0.1.0](https://github.com/automatix/claude-mover/releases/tag/v0.1.0) mit `claude_mover.py` als Artefakt erstellt.
+- SemVer-Regel als globales Memory gespeichert.
+
+**Result:** Projekt ist released und versioniert.
