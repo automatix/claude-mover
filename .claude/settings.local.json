@@ -27,7 +27,8 @@
       "Bash(git cherry-pick *)",
       "Bash(gh issue create --title 'fix: [WinError 5] Access is denied when deleting source with .git directory' --body ' *)",
       "Bash(python3 *)",
-      "Bash(python *)"
+      "Bash(python *)",
+      "Bash(pip install *)"
     ]
   }
 }

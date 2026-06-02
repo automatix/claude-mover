@@ -105,7 +105,15 @@ Example: `\\wsl.localhost\Ubuntu\home\automatix\workspace\SleepNote` → `--wsl-
 
 ## Tests
 
-There is no test suite. The tool is tested manually via `--dry-run` against real Claude project directories.
+Run the test suite with:
+
+```bash
+python -m pytest test_claude_mover.py
+```
+
+`test_claude_mover.py` contains `140` tests across `20` test classes with `92%` line coverage. Coverage is measured via `pytest-cov` (`pip install pytest-cov`).
+
+The uncovered lines (`ensure_parent` interactive prompt, `if __name__ == "__main__"`) require interactive `input()` mocking or direct script execution and are intentionally left for manual verification via `--dry-run`.
 
 ## Deferred features
 
