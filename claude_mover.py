@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -347,13 +348,23 @@ def patch_jsonl(file_path: Path, old_path: Path, new_path: Path, dry_run: bool) 
 # Directory move (robocopy for long-path safety)
 # ---------------------------------------------------------------------------
 
+def _remove_readonly(func, path, exc_info) -> None:
+    """onerror handler for shutil.rmtree: clear the read-only bit, then retry.
+
+    Git sets objects in .git/objects/ as read-only on Windows; without this
+    handler shutil.rmtree raises [WinError 5] Access is denied on those files.
+    """
+    os.chmod(path, stat.S_IWRITE)
+    func(path)
+
+
 def _move_directory(source: Path, target: Path) -> None:
     """Move a directory tree using robocopy to handle Windows MAX_PATH limits.
 
     shutil.move uses CreateFileW which caps at 260 chars; robocopy uses the
     extended-length path API internally, so files at the 260-char boundary copy
-    correctly.  Source deletion is done with shutil.rmtree because source paths
-    are unchanged (pre-existing) and therefore guaranteed under MAX_PATH.
+    correctly.  Source deletion uses _remove_readonly to handle read-only files
+    (e.g. .git/objects) that shutil.rmtree cannot delete by default on Windows.
     """
     result = subprocess.run(
         [
@@ -376,13 +387,13 @@ def _move_directory(source: Path, target: Path) -> None:
         raise RuntimeError(
             f"robocopy failed (exit {result.returncode}):\n{result.stdout.strip()}"
         )
-    shutil.rmtree(str(source))
+    shutil.rmtree(str(source), onerror=_remove_readonly)
 
 
 def _rmtree_robust(path: Path) -> None:
     """Remove a directory tree; falls back to robocopy /MIR when paths exceed MAX_PATH."""
     try:
-        shutil.rmtree(str(path))
+        shutil.rmtree(str(path), onerror=_remove_readonly)
     except OSError:
         with tempfile.TemporaryDirectory() as empty:
             subprocess.run(
@@ -604,7 +615,7 @@ def main() -> None:
         cleaned = False
         if target_ctx.exists():
             logging.info(f"[RESUME] Removing stale target context: {target_ctx}")
-            shutil.rmtree(str(target_ctx))
+            shutil.rmtree(str(target_ctx), onerror=_remove_readonly)
             cleaned = True
         if target.exists():
             logging.info(f"[RESUME] Removing partial project copy: {target}")
