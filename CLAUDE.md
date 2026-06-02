@@ -29,10 +29,13 @@ python claude_mover.py <source> <target>
 python claude_mover.py <source> <target> --dry-run
 ```
 
-All three path formats are accepted for `<source>` and `<target>`:
+All path formats are accepted for `<source>` and `<target>`:
 - CMD style: `D:\workspace\myapp`
 - Git Bash style: `/d/workspace/myapp`
 - Claude dashed: `D--workspace-myapp`
+- UNC (WSL): `\\wsl.localhost\Ubuntu\home\user\myapp`
+- UNC forward-slash: `//wsl.localhost/Ubuntu/home/user/myapp`
+- Claude dashed (UNC): `--wsl-localhost-ubuntu-home-user-myapp` (requires `--` separator on CLI)
 
 Logs are written to `%LOCALAPPDATA%\ClaudeMover\logs\` alongside stdout.
 
@@ -45,7 +48,7 @@ The file is organized into clearly delimited sections:
 | Section | Responsibility |
 |---|---|
 | **Logging** | File + stdout logging setup; dry-run prefix |
-| **Path utilities** | `encode_path` (absolute path → dashed key), `normalize_path` (accepts all three input formats), `_decode_dashed_naive` |
+| **Path utilities** | `encode_path` (absolute path → dashed key), `normalize_path` (accepts all path formats), `_decode_dashed_naive`, `_decode_dashed_unc_naive`, `_UNC_DASHED_SERVERS` |
 | **Path variant helpers** | `_path_variants` returns the `5` string representations of a path that may appear in files; `patch_content` replaces all of them in a string |
 | **Validation** | `validate_source` / `validate_target` — existence checks with actionable error messages |
 | **Parent directory** | `ensure_parent` — interactive prompt when the target parent is missing |
@@ -57,9 +60,25 @@ The file is organized into clearly delimited sections:
 
 ### Key design points
 
-- `_path_variants` emits `5` representations for each path (`D:\p`, `D:/p`, `/d/p`, `/D/p`, `D--p`) so that `patch_content` replaces every form that could appear in JSON or JSONL files regardless of how the path was serialized.
+- `_path_variants` emits `5` representations for each path so that `patch_content` replaces every form that could appear in JSON or JSONL files:
+  - Drive-letter paths: `D:\p`, `D:/p`, `/d/p`, `/D/p`, `D--p`
+  - UNC paths: `\\server\share\p`, `//server/share/p` (×3, no Git Bash equivalent), `--server-share-p`
 - The Claude context directory is renamed **before** session files are patched; if patching targets the renamed directory, `dry_run` mode reads from the original to avoid mutating state.
 - Backup is created before any write and removed only on full success. On any exception, `restore_backup` puts the context directory back so the source project remains intact.
+
+### UNC / WSL path encoding
+
+Claude Code on Windows encodes WSL UNC paths using these rules (derived empirically):
+
+| Part | Rule |
+|---|---|
+| Leading `\\` | → `--` |
+| UNC server (e.g. `wsl.localhost`) | lowercased, `.` → `-` |
+| UNC share / distro (e.g. `Ubuntu`) | lowercased |
+| Path components | case preserved, `\` → `-` |
+
+Example: `\\wsl.localhost\Ubuntu\home\automatix\workspace\SleepNote` → `--wsl-localhost-ubuntu-home-automatix-workspace-SleepNote`
+
 
 ## Domain knowledge
 
@@ -68,6 +87,7 @@ The file is organized into clearly delimited sections:
 - `~/.claude/history.jsonl` — global history index; contains absolute path references that must be rewritten on move.
 - `.claude/` folder and `CLAUDE.md` inside the project folder travel with the folder automatically — no special handling needed.
 - `.mcp.json` may contain absolute paths and must be patched if present.
+- WSL projects accessed from Windows via `\\wsl.localhost\...` stay in the Windows `%USERPROFILE%\.claude\` store — no cross-store migration needed.
 
 ## Tests
 
