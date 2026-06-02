@@ -104,3 +104,14 @@
 - `CLAUDE.md` aktualisiert.
 
 **Result:** Nach einem Fehler reicht `python claude_mover.py <source> <target> --resume` um die Migration sauber neu zu starten. Kein manuelles Aufräumen mehr nötig.
+
+## `2026-06-02` – Session-Abschluss: Workflow-Instruktion + README-Finalisierung
+
+**Request:** README aktualisieren; Instruktion hinzufügen: PRs immer mergen und lokal auf master zurückwechseln.
+
+**Done:**
+- README aktualisiert: `--resume` in Usage-Tabelle, verbesserter Rollback-Abschnitt, neuer Abschnitt „Recovering from an interrupted migration".
+- `CLAUDE.md` Workflow-Abschnitt hinzugefügt: nach jedem PR `gh pr merge` + lokales Zurückwechseln auf `master`.
+- PR [#7](https://github.com/automatix/claude-mover/pull/7) gemergt, lokal auf `master` zurückgewechselt und gepullt.
+
+**Result:** Projekt ist auf `master`, alle Änderungen dieser Session sind integriert.
