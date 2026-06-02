@@ -37,17 +37,23 @@ Always run with `--dry-run` first to verify the plan before committing.
 
 ### Path formats
 
-All three formats are accepted for both `<source>` and `<target>`:
+All formats are accepted for both `<source>` and `<target>`:
 
 | Format | Example |
 |---|---|
 | CMD / PowerShell | `D:\workspace\myapp` |
 | Git Bash | `/d/workspace/myapp` |
 | Claude dashed | `D--workspace-myapp` |
+| UNC (WSL) | `\\wsl.localhost\Ubuntu\home\user\myapp` |
+| UNC forward-slash | `//wsl.localhost/Ubuntu/home/user/myapp` |
+| Claude dashed (UNC) | `--wsl-localhost-ubuntu-home-user-myapp` ¹ |
+
+¹ Requires `--` separator on the command line to prevent argparse from interpreting it as a flag:
+`python claude_mover.py -- --wsl-localhost-ubuntu-... D:\new\location`
 
 ### Examples
 
-Move a project to a new location:
+Move a project to a new location on the same drive:
 
 ```
 python claude_mover.py D:\workspace\old-name D:\workspace\new-name
@@ -59,16 +65,23 @@ Preview a move across drives without making changes:
 python claude_mover.py D:\projects\myapp E:\code\myapp --dry-run
 ```
 
+Move a project from a Windows drive into WSL:
+
+```
+python claude_mover.py D:\workspace\myapp "\\wsl.localhost\Ubuntu\home\user\workspace\myapp"
+```
+
+Move a project from WSL to a Windows drive:
+
+```
+python claude_mover.py "\\wsl.localhost\Ubuntu\home\user\workspace\myapp" D:\workspace\myapp
+```
+
+
 Use Git Bash path format:
 
 ```
 python claude_mover.py /d/workspace/myapp /d/clients/myapp
-```
-
-Use the Claude dashed key format (as shown in `~/.claude/projects/`):
-
-```
-python claude_mover.py D--workspace-myapp D--clients-myapp
 ```
 
 ## Rollback
