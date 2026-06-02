@@ -80,24 +80,42 @@ The file is organized into clearly delimited sections:
 - The Claude context directory is renamed **before** session files are patched; if patching targets the renamed directory, `dry_run` mode reads from the original to avoid mutating state.
 - Backup is created before any write and removed only on full success. On any exception, `restore_backup` puts the context directory back so the source project remains intact.
 
-### UNC / WSL path encoding
+### Path encoding (drive-letter and UNC / WSL)
 
-Claude Code on Windows encodes WSL UNC paths using these rules (derived empirically):
+Claude Code derives the per-project directory name from the working directory
+with a **single universal rule**, verified empirically against the directories
+the real CLI creates: **every character that is not an ASCII letter or digit is
+replaced by `-`, and the case is preserved.** There is no lowercasing and no
+special-casing of the UNC server, share, or the `$` in `\\wsl$\`.
 
-| Part | Rule |
+| Input character | Encoded as |
 |---|---|
-| Leading `\\` | → `--` |
-| UNC server (e.g. `wsl.localhost`) | lowercased, `.` → `-` |
-| UNC share / distro (e.g. `Ubuntu`) | lowercased |
-| Path components | case preserved, `\` → `-` |
+| ASCII letter / digit | unchanged (case preserved) |
+| Backslash `\`, forward slash `/`, colon `:`, dot `.`, space, `$`, any other punctuation | `-` |
 
-Example: `\\wsl.localhost\Ubuntu\home\automatix\workspace\SleepNote` → `--wsl-localhost-ubuntu-home-automatix-workspace-SleepNote`
+Each character maps to exactly one dash — consecutive separators are **not**
+collapsed (e.g. the leading `\\` becomes `--`, and `$\` becomes `--`).
+
+Examples:
+
+| Path | Encoded directory key |
+|---|---|
+| `D:\workspace\myapp` | `D--workspace-myapp` |
+| `D:\workspace\tools\Claude Mover` | `D--workspace-tools-Claude-Mover` |
+| `\\wsl.localhost\ubuntu\home\automatix\workspace\FooBarWSL` | `--wsl-localhost-ubuntu-home-automatix-workspace-FooBarWSL` |
+| `\\wsl$\Ubuntu\home\automatix\workspace\SleepNote` | `--wsl--Ubuntu-home-automatix-workspace-SleepNote` |
+
+> A Windows→WSL move is **not** a cross-store migration: there is no `claude`
+> CLI inside the WSL distro, so the desktop app runs the CLI on the Windows side
+> with the UNC `cwd`, and sessions stay in the Windows `%USERPROFILE%\.claude\`
+> store. Only the directory **key** changes — which is exactly why getting the
+> encoding right matters. (See issue `#21`.)
 
 
 ## Domain knowledge
 
 - `~/.claude/projects/<encoded-path>/` — one directory per project; contains `.jsonl` session files.
-- Path encoding: drive colon + backslash → `--`, remaining backslashes → `-`. E.g. `D:\workspace\myapp` → `D--workspace-myapp`.
+- Path encoding: every non-alphanumeric character → `-`, case preserved (see the [Path encoding](#path-encoding-drive-letter-and-unc--wsl) section). E.g. `D:\workspace\myapp` → `D--workspace-myapp`.
 - `~/.claude/history.jsonl` — global history index; contains absolute path references that must be rewritten on move.
 - `~/.claude.json` (in the **home directory**, NOT inside `~/.claude/`) — global app config read by the Claude desktop app; stores project settings keyed by path (both backslash and forward-slash forms) and the GitHub repo → local path map. The `backups/` folder inside `~/.claude/` contains timestamped backups of this file made before each write.
 - `%LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming\Claude\claude-code-sessions\<account>\<group>\local_<id>.json` — the Claude **desktop app** (MSIX) per-session store, **separate from `~/.claude/`**. Each file holds `cwd` and `originCwd`. These are what actually drive the app's "Trust this workspace?" dialog, "Show in Explorer", and "Copy path" (see `logs\main.log`: `LocalSessions.checkTrust: cwd=...`). They survive a folder move and must be patched, or the app keeps showing the old path even after `~/.claude.json` is fixed.
