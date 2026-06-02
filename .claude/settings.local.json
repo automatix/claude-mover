@@ -25,7 +25,9 @@
       "Bash(gh issue create --title 'fix: rollback leaves stale target context and partial project copy' --body ' *)",
       "Bash(gh api *)",
       "Bash(git cherry-pick *)",
-      "Bash(gh issue create --title 'fix: [WinError 5] Access is denied when deleting source with .git directory' --body ' *)"
+      "Bash(gh issue create --title 'fix: [WinError 5] Access is denied when deleting source with .git directory' --body ' *)",
+      "Bash(python3 *)",
+      "Bash(python *)"
     ]
   }
 }
