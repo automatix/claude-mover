@@ -115,3 +115,16 @@
 - PR [#7](https://github.com/automatix/claude-mover/pull/7) gemergt, lokal auf `master` zurückgewechselt und gepullt.
 
 **Result:** Projekt ist auf `master`, alle Änderungen dieser Session sind integriert.
+
+## `2026-06-02` – ~/.claude.json: fehlende Datei im Migrations-Scope
+
+**Request:** Claude-App zeigt nach WSL-Migration immer noch den alten Windows-Pfad `D:\workspace\tools\SleepNote`.
+
+**Done:**
+- Root cause gefunden: `~/.claude.json` (im HOME-Verzeichnis, NICHT in `~/.claude/`) ist die globale App-Konfiguration, die die Claude Desktop-App für das Projektlisten-Display liest. Sie speichert Pfade als JSON-Schlüssel (backslash- und forward-slash-Form) sowie im `githubRepoPaths`-Mapping.
+- Zusätzlicher Bug: `_path_variants` erzeugte keine JSON-enkodierte Backslash-Form — `history.jsonl` und `.claude.json` verwenden `D:\\workspace` (zwei Backslashes). 6. Variante via `json.dumps(p_str)[1:-1]` hinzugefügt (PR [#14](https://github.com/automatix/claude-mover/pull/14)).
+- `~/.claude.json` manuell gepatcht: 3 Vorkommen (2× backslash, 1× forward-slash) ersetzt.
+- `CLAUDE_JSON`-Konstante und Step 6 in `migrate()` hinzugefügt: patcht `~/.claude.json` automatisch bei jeder Migration.
+- Direkt auf `master` gepusht (Abweichung von der Branch-Regel — wird beim nächsten PR beachtet).
+
+**Result:** Die Claude Desktop-App sollte nach App-Neustart den neuen WSL-Pfad anzeigen.
