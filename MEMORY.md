@@ -90,3 +90,17 @@
 - Branch: `bugfix/long-path-robocopy`.
 
 **Result:** Moves to UNC targets with long file paths now succeed.
+
+## `2026-06-02` – Rollback-Fix + `--resume` + Checkpoint
+
+**Request:** Nach fehlgeschlagener Migration: Zustand analysieren, Recovery-Hilfe, dann Sicherungsmechanismus einbauen.
+
+**Done:**
+- Analyse: Der alte Rollback stellte nur den Source-Context wieder her, ließ aber den stale Target-Context (`--wsl$-ubuntu-...`) und die Partial-WSL-Kopie zurück.
+- `_rmtree_robust(path)` hinzugefügt: fällt bei `OSError` auf robocopy `/MIR` zurück (Long-Path-sicheres Löschen).
+- Rollback in `migrate()` verbessert: räumt jetzt auch stale `target_ctx` und Partial-Kopie bei `target` auf.
+- Checkpoint-Mechanismus (`_write_checkpoint` / `_read_checkpoint` / `_clear_checkpoint`) hinzugefügt: schreibt `%LOCALAPPDATA%\ClaudeMover\checkpoints\<source>.json` nach Backup-Erstellung, aktualisiert bei Fehler mit Error-Meldung, löscht bei Erfolg.
+- `--resume`-Flag in `main()`: räumt stale `target_ctx` + Partial-Kopie auf, dann normaler Migrations-Lauf.
+- `CLAUDE.md` aktualisiert.
+
+**Result:** Nach einem Fehler reicht `python claude_mover.py <source> <target> --resume` um die Migration sauber neu zu starten. Kein manuelles Aufräumen mehr nötig.
