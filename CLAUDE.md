@@ -27,6 +27,9 @@ python claude_mover.py <source> <target>
 
 # Preview what would happen without making changes
 python claude_mover.py <source> <target> --dry-run
+
+# Clean up leftover artifacts from a failed migration, then retry
+python claude_mover.py <source> <target> --resume
 ```
 
 All path formats are accepted for `<source>` and `<target>`:
@@ -54,12 +57,16 @@ The file is organized into clearly delimited sections:
 | **Parent directory** | `ensure_parent` — interactive prompt when the target parent is missing |
 | **Backup** | `backup_context` / `restore_backup` / `remove_backup` — safety net around the context rename |
 | **Patching** | `patch_file` (generic), `patch_jsonl` (line-by-line for `.jsonl` files) |
+| **Directory move** | `_move_directory` — robocopy-based move for long-path safety; `_rmtree_robust` — robocopy /MIR fallback for deletion |
+| **Checkpoint** | `_write_checkpoint` / `_read_checkpoint` / `_clear_checkpoint` — persist migration state to `%LOCALAPPDATA%\ClaudeMover\checkpoints\` |
 | **Migration** | `migrate` — orchestrates the five steps and rolls back on failure |
 | **Summary** | `print_summary` — final report |
 | **Entry point** | `main` — argument parsing, calls `migrate`, surfaces errors |
 
 ### Key design points
 
+- On any failure, the rollback now cleans up all three artefacts: restores the source context from backup, deletes the stale target context, and removes any partial project copy at the target location using `_rmtree_robust`.
+- A checkpoint file (`%LOCALAPPDATA%\ClaudeMover\checkpoints\<source-encoded>.json`) is written after the backup step and updated with the error message on failure. It is deleted on success. Running with `--resume` reads this checkpoint, cleans up stale artefacts, and restarts the migration cleanly.
 - `_path_variants` emits `5` representations for each path so that `patch_content` replaces every form that could appear in JSON or JSONL files:
   - Drive-letter paths: `D:\p`, `D:/p`, `/d/p`, `/D/p`, `D--p`
   - UNC paths: `\\server\share\p`, `//server/share/p` (×3, no Git Bash equivalent), `--server-share-p`

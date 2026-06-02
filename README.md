@@ -28,7 +28,7 @@ Close any active Claude Code session for the project you want to move, and close
 ## Usage
 
 ```
-python claude_mover.py <source> <target> [--dry-run]
+python claude_mover.py <source> <target> [--dry-run] [--resume]
 ```
 
 | Argument | Description |
@@ -36,6 +36,7 @@ python claude_mover.py <source> <target> [--dry-run]
 | `source` | Current location of the project folder |
 | `target` | New location to move it to |
 | `--dry-run` | Preview all changes without writing anything |
+| `--resume` | Clean up leftovers from a previous failed migration, then retry |
 
 Always run with `--dry-run` first to verify the plan before committing.
 
@@ -151,7 +152,25 @@ Yes, as a precaution. If a Claude Code session for the source project is open, i
 
 ## Rollback
 
-If anything goes wrong during migration, Claude Mover automatically restores the original Claude context directory from a backup created at the start. The project folder is only moved after the session files are patched, so a failure at any earlier step leaves the source untouched.
+If anything goes wrong during migration, Claude Mover automatically:
+
+1. Restores the original Claude context directory from the backup created at the start
+2. Removes the stale target context directory (if it was already renamed)
+3. Removes any partial project copy at the target location
+
+The source folder and its session history are left exactly as they were before the run.
+
+## Recovering from an interrupted migration
+
+If the process is killed mid-run (e.g. power loss, `Ctrl+C`, or a hard error), the automatic rollback may not complete. In that case, use `--resume`:
+
+```powershell
+python claude_mover.py <source> <target> --resume
+```
+
+`--resume` inspects the target path and the Claude projects directory, removes any leftover artifacts from the previous attempt (stale target context, partial project copy), and then runs the full migration from scratch.
+
+A checkpoint file is written to `%LOCALAPPDATA%\ClaudeMover\checkpoints\` at the start of every migration. It records the source, target, backup path, and — on failure — the error message. The file is deleted on success.
 
 ## Logs
 

@@ -2,11 +2,14 @@
 """claude-mover: safely relocates Claude Code project folders on Windows."""
 
 import argparse
+import json
 import logging
 import os
 import re
 import shutil
+import subprocess
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -16,6 +19,7 @@ CLAUDE_DIR = Path.home() / ".claude"
 PROJECTS_DIR = CLAUDE_DIR / "projects"
 HISTORY_FILE = CLAUDE_DIR / "history.jsonl"
 LOG_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / APP_NAME / "logs"
+CHECKPOINT_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / APP_NAME / "checkpoints"
 
 
 # ---------------------------------------------------------------------------
@@ -340,6 +344,93 @@ def patch_jsonl(file_path: Path, old_path: Path, new_path: Path, dry_run: bool) 
 
 
 # ---------------------------------------------------------------------------
+# Directory move (robocopy for long-path safety)
+# ---------------------------------------------------------------------------
+
+def _move_directory(source: Path, target: Path) -> None:
+    """Move a directory tree using robocopy to handle Windows MAX_PATH limits.
+
+    shutil.move uses CreateFileW which caps at 260 chars; robocopy uses the
+    extended-length path API internally, so files at the 260-char boundary copy
+    correctly.  Source deletion is done with shutil.rmtree because source paths
+    are unchanged (pre-existing) and therefore guaranteed under MAX_PATH.
+    """
+    result = subprocess.run(
+        [
+            "robocopy", str(source), str(target),
+            "/E",    # copy subdirectories, including empty ones
+            "/NFL",  # suppress file listing
+            "/NDL",  # suppress directory listing
+            "/NJH",  # suppress job header
+            "/NJS",  # suppress job summary
+            "/R:0",  # 0 retries on copy errors
+            "/W:0",  # 0 s wait between retries
+        ],
+        capture_output=True,
+        text=True,
+    )
+    # robocopy exit codes 0–7 mean success (varying levels of work done); 8+ mean error
+    if result.returncode >= 8:
+        if target.exists():
+            shutil.rmtree(str(target), ignore_errors=True)
+        raise RuntimeError(
+            f"robocopy failed (exit {result.returncode}):\n{result.stdout.strip()}"
+        )
+    shutil.rmtree(str(source))
+
+
+def _rmtree_robust(path: Path) -> None:
+    """Remove a directory tree; falls back to robocopy /MIR when paths exceed MAX_PATH."""
+    try:
+        shutil.rmtree(str(path))
+    except OSError:
+        with tempfile.TemporaryDirectory() as empty:
+            subprocess.run(
+                ["robocopy", empty, str(path), "/MIR",
+                 "/NFL", "/NDL", "/NJH", "/NJS", "/R:0", "/W:0"],
+                capture_output=True,
+            )
+        shutil.rmtree(str(path), ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# Checkpoint (migration state for --resume)
+# ---------------------------------------------------------------------------
+
+def _checkpoint_path(source: Path) -> Path:
+    CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+    return CHECKPOINT_DIR / f"{encode_path(source)}.json"
+
+
+def _write_checkpoint(source: Path, target: Path, backup: Path, error: str = "") -> None:
+    data = {
+        "source": str(source),
+        "target": str(target),
+        "backup": str(backup),
+        "failed": bool(error),
+        "error": error,
+        "timestamp": datetime.now().isoformat(),
+    }
+    _checkpoint_path(source).write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def _read_checkpoint(source: Path) -> Optional[dict]:
+    cp = _checkpoint_path(source)
+    if cp.exists():
+        try:
+            return json.loads(cp.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+    return None
+
+
+def _clear_checkpoint(source: Path) -> None:
+    cp = _checkpoint_path(source)
+    if cp.exists():
+        cp.unlink()
+
+
+# ---------------------------------------------------------------------------
 # Migration
 # ---------------------------------------------------------------------------
 
@@ -371,6 +462,8 @@ def migrate(source: Path, target: Path, dry_run: bool) -> dict:
 
     # --- Backup ---
     backup = backup_context(source_ctx, dry_run)
+    if not dry_run:
+        _write_checkpoint(source, target, backup)
 
     try:
         # Step 1: Rename Claude context directory
@@ -393,7 +486,7 @@ def migrate(source: Path, target: Path, dry_run: bool) -> dict:
         # Step 3: Move project folder
         logging.info(f"Moving project folder ...")
         if not dry_run:
-            shutil.move(str(source), str(target))
+            _move_directory(source, target)
         else:
             logging.info(f"[DRY RUN] Would move: {source} -> {target}")
 
@@ -419,11 +512,24 @@ def migrate(source: Path, target: Path, dry_run: bool) -> dict:
 
         # Step 6: Remove backup
         remove_backup(backup, dry_run)
+        if not dry_run:
+            _clear_checkpoint(source)
 
-    except Exception:
+    except Exception as exc:
         logging.error("Migration failed. Restoring from backup ...")
         if not dry_run:
             restore_backup(backup, source_ctx)
+            # Remove the stale target context (renamed but now reverted in source_ctx)
+            if target_ctx.exists():
+                shutil.rmtree(str(target_ctx), ignore_errors=True)
+                logging.info(f"Removed stale target context: {target_ctx}")
+            # Remove any partial project copy at the target location
+            if target.exists():
+                logging.info(f"Removing partial project copy: {target}")
+                _rmtree_robust(target)
+            _write_checkpoint(source, target, backup, error=str(exc))
+            logging.info(f"Recovery state saved: {_checkpoint_path(source)}")
+            logging.info("Fix the issue, then re-run with --resume to retry.")
         raise
 
     return summary
@@ -471,6 +577,11 @@ def main() -> None:
         action="store_true",
         help="Show what would be done without making any changes",
     )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Clean up leftover artifacts from a previous failed migration, then retry",
+    )
     args = parser.parse_args()
 
     log_file = setup_logging(args.dry_run)
@@ -480,6 +591,29 @@ def main() -> None:
 
     logging.info(f"Resolved source: {source}")
     logging.info(f"Resolved target: {target}")
+
+    if args.resume and not args.dry_run:
+        cp = _read_checkpoint(source)
+        if cp and cp.get("target") != str(target.resolve()):
+            logging.warning(
+                f"Checkpoint records a different target: {cp['target']}\n"
+                f"  CLI target: {target}\n"
+                f"  Proceeding with CLI target."
+            )
+        target_ctx = PROJECTS_DIR / encode_path(target)
+        cleaned = False
+        if target_ctx.exists():
+            logging.info(f"[RESUME] Removing stale target context: {target_ctx}")
+            shutil.rmtree(str(target_ctx))
+            cleaned = True
+        if target.exists():
+            logging.info(f"[RESUME] Removing partial project copy: {target}")
+            _rmtree_robust(target)
+            cleaned = True
+        if cleaned:
+            logging.info("[RESUME] Cleanup complete. Starting migration ...")
+        else:
+            logging.info("[RESUME] Nothing to clean up. Starting migration ...")
 
     try:
         summary = migrate(source, target, args.dry_run)

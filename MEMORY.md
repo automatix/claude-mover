@@ -79,3 +79,28 @@
   - `_path_variants`: 5-variant list for UNC paths
 
 **Result:** claude_mover.py now supports Windows ↔ WSL moves in all path formats.
+
+## `2026-06-02` – MAX_PATH fix: robocopy for directory move
+
+**Request:** Migration to `\\wsl$\Ubuntu\...` failed with `[WinError 3]` for files with very long names in `vendor/composer/`.
+
+**Done:**
+- Root cause: `shutil.move` uses `CreateFileW` (260-char `MAX_PATH` limit). The UNC prefix `\\wsl$\Ubuntu\home\automatix\workspace\SleepNote\` (49 chars) plus the long vendor path pushed two PHP filenames to exactly 260 chars — one over the null-terminator limit.
+- Fix: replaced `shutil.move` with a new `_move_directory(source, target)` helper that uses `robocopy /E` (which uses the Windows extended-length path API internally) followed by `shutil.rmtree(source)` (source paths unchanged, guaranteed under `MAX_PATH`).
+- Branch: `bugfix/long-path-robocopy`.
+
+**Result:** Moves to UNC targets with long file paths now succeed.
+
+## `2026-06-02` – Rollback-Fix + `--resume` + Checkpoint
+
+**Request:** Nach fehlgeschlagener Migration: Zustand analysieren, Recovery-Hilfe, dann Sicherungsmechanismus einbauen.
+
+**Done:**
+- Analyse: Der alte Rollback stellte nur den Source-Context wieder her, ließ aber den stale Target-Context (`--wsl$-ubuntu-...`) und die Partial-WSL-Kopie zurück.
+- `_rmtree_robust(path)` hinzugefügt: fällt bei `OSError` auf robocopy `/MIR` zurück (Long-Path-sicheres Löschen).
+- Rollback in `migrate()` verbessert: räumt jetzt auch stale `target_ctx` und Partial-Kopie bei `target` auf.
+- Checkpoint-Mechanismus (`_write_checkpoint` / `_read_checkpoint` / `_clear_checkpoint`) hinzugefügt: schreibt `%LOCALAPPDATA%\ClaudeMover\checkpoints\<source>.json` nach Backup-Erstellung, aktualisiert bei Fehler mit Error-Meldung, löscht bei Erfolg.
+- `--resume`-Flag in `main()`: räumt stale `target_ctx` + Partial-Kopie auf, dann normaler Migrations-Lauf.
+- `CLAUDE.md` aktualisiert.
+
+**Result:** Nach einem Fehler reicht `python claude_mover.py <source> <target> --resume` um die Migration sauber neu zu starten. Kein manuelles Aufräumen mehr nötig.
