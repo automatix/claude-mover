@@ -205,3 +205,16 @@
 - **Tool-Follow-up:** Issue [#23](https://github.com/automatix/claude-mover/issues/23) — `claude_mover` soll WSL-Ziele auf die kanonische `\wsl.localhost\<distro-klein>\…`-Form normalisieren.
 
 **Result:** SleepNote jetzt identisch strukturiert wie native WSL-Projekte; robust gegen erneutes Verwaisen. `repair_wsl_canonicalize.py` untracked (one-off, wie die anderen Repair-Skripte).
+
+## `2026-06-03` – Issue #23 implementiert: WSL-Ziel-Normalisierung (PR #24)
+
+**Request:** Offene PRs und Issues erledigen.
+
+**Done:**
+- **PR #22** (Encoding-Fix #21) gemergt (squash) → Issue #21 geschlossen; zurück auf `master`.
+- **Issue #23 implementiert:** `_canonicalize_wsl()` normalisiert jeden WSL-UNC-Pfad (Server `wsl$`/`wsl.localhost` → `wsl.localhost`, Distro-Komponente kleingeschrieben, restliche Komponenten unverändert, Nicht-WSL-Pfade unangetastet). `normalize_path` wendet es an allen UNC-Rückgabepunkten an → beide Aliase ergeben denselben kanonischen Key `--wsl-localhost-ubuntu-…`. `_is_noncanonical_wsl_input()` + Log-Hinweis in `main`, wenn die Eingabeform umgeschrieben wurde.
+- **Tests:** `TestCanonicalizeWsl`, `TestIsNoncanonicalWslInput`, Both-Aliases→gleicher-Key. `161` Tests / `23` Klassen grün.
+- **Doku:** `CLAUDE.md` (kanonische Form als implementiert markiert, Path-Utilities-Tabelle, Testzahl) + `README.md` (Windows→WSL-Abschnitt).
+- **PR #24** gemergt (squash) → Issue #23 geschlossen.
+
+**Result:** Keine offenen PRs/Issues mehr. `claude_mover` erzeugt für WSL-Ziele jetzt automatisch den kanonischen App-Key, unabhängig von Alias/Schreibweise der Eingabe.
