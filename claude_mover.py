@@ -353,7 +353,17 @@ def _remove_readonly(func, path, exc_info) -> None:
 
     Git sets objects in .git/objects/ as read-only on Windows; without this
     handler shutil.rmtree raises [WinError 5] Access is denied on those files.
+
+    WinError 32 (sharing violation) means another process holds the file open
+    and cannot be fixed by chmod — raise immediately with an actionable message.
     """
+    exc = exc_info[1]
+    if isinstance(exc, OSError) and getattr(exc, "winerror", None) == 32:
+        raise OSError(
+            f"[WinError 32] A file is locked by another process: {path}\n"
+            "Close any editors, terminals, or Claude Code sessions that have "
+            "files in the source project open, then retry with --resume."
+        ) from exc
     os.chmod(path, stat.S_IWRITE)
     func(path)
 
