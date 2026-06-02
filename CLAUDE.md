@@ -14,6 +14,7 @@ The correct migration order is:
 4. Update any absolute paths in `.claude/settings.json` and `.mcp.json`.
 5. Update path entries in `~/.claude/history.jsonl`.
 6. Update `~/.claude.json` (global app config — project list and GitHub repo map; this is what the Claude desktop app reads to display the "open project" path).
+7. Update `cwd`/`originCwd` in the Claude **desktop app** session store (`%LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming\Claude\claude-code-sessions\**\local_*.json`). This store is separate from `~/.claude/` and is what drives the app's trust dialog, "Show in Explorer", and "Copy path".
 
 ## Requirements
 
@@ -61,10 +62,10 @@ The file is organized into clearly delimited sections:
 | **Validation** | `validate_source` / `validate_target` — existence checks with actionable error messages |
 | **Parent directory** | `ensure_parent` — interactive prompt when the target parent is missing |
 | **Backup** | `backup_context` / `restore_backup` / `remove_backup` — safety net around the context rename |
-| **Patching** | `patch_file` (generic), `patch_jsonl` (line-by-line for `.jsonl` files) |
+| **Patching** | `patch_file` (generic), `patch_jsonl` (line-by-line for `.jsonl` files), `app_session_files` (locate the desktop app session store) |
 | **Directory move** | `_move_directory` — robocopy-based move for long-path safety; `_rmtree_robust` — robocopy /MIR fallback for deletion |
 | **Checkpoint** | `_write_checkpoint` / `_read_checkpoint` / `_clear_checkpoint` — persist migration state to `%LOCALAPPDATA%\ClaudeMover\checkpoints\` |
-| **Migration** | `migrate` — orchestrates the five steps and rolls back on failure |
+| **Migration** | `migrate` — orchestrates the seven steps and rolls back on failure |
 | **Summary** | `print_summary` — final report |
 | **Entry point** | `main` — argument parsing, calls `migrate`, surfaces errors |
 
@@ -98,7 +99,8 @@ Example: `\\wsl.localhost\Ubuntu\home\automatix\workspace\SleepNote` → `--wsl-
 - `~/.claude/projects/<encoded-path>/` — one directory per project; contains `.jsonl` session files.
 - Path encoding: drive colon + backslash → `--`, remaining backslashes → `-`. E.g. `D:\workspace\myapp` → `D--workspace-myapp`.
 - `~/.claude/history.jsonl` — global history index; contains absolute path references that must be rewritten on move.
-- `~/.claude.json` (in the **home directory**, NOT inside `~/.claude/`) — global app config read by the Claude desktop app; stores project settings keyed by path (both backslash and forward-slash forms) and the GitHub repo → local path map. This is the file responsible for the path shown in "copy path" in the desktop app. The `backups/` folder inside `~/.claude/` contains timestamped backups of this file made before each write.
+- `~/.claude.json` (in the **home directory**, NOT inside `~/.claude/`) — global app config read by the Claude desktop app; stores project settings keyed by path (both backslash and forward-slash forms) and the GitHub repo → local path map. The `backups/` folder inside `~/.claude/` contains timestamped backups of this file made before each write.
+- `%LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming\Claude\claude-code-sessions\<account>\<group>\local_<id>.json` — the Claude **desktop app** (MSIX) per-session store, **separate from `~/.claude/`**. Each file holds `cwd` and `originCwd`. These are what actually drive the app's "Trust this workspace?" dialog, "Show in Explorer", and "Copy path" (see `logs\main.log`: `LocalSessions.checkTrust: cwd=...`). They survive a folder move and must be patched, or the app keeps showing the old path even after `~/.claude.json` is fixed.
 - `.claude/` folder and `CLAUDE.md` inside the project folder travel with the folder automatically — no special handling needed.
 - `.mcp.json` may contain absolute paths and must be patched if present.
 - WSL projects accessed from Windows via `\\wsl.localhost\...` stay in the Windows `%USERPROFILE%\.claude\` store — no cross-store migration needed.
@@ -111,7 +113,7 @@ Run the test suite with:
 python -m pytest test_claude_mover.py
 ```
 
-`test_claude_mover.py` contains `140` tests across `20` test classes with `92%` line coverage. Coverage is measured via `pytest-cov` (`pip install pytest-cov`).
+`test_claude_mover.py` contains `144` tests across `21` test classes with `92%` line coverage. Coverage is measured via `pytest-cov` (`pip install pytest-cov`).
 
 The uncovered lines (`ensure_parent` interactive prompt, `if __name__ == "__main__"`) require interactive `input()` mocking or direct script execution and are intentionally left for manual verification via `--dry-run`.
 

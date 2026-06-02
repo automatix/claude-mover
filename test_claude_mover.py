@@ -31,6 +31,7 @@ from claude_mover import (
     _remove_readonly,
     _rmtree_robust,
     _write_checkpoint,
+    app_session_files,
     backup_context,
     encode_path,
     normalize_path,
@@ -382,6 +383,67 @@ class TestPatchFile(unittest.TestCase):
         _write(f, content)
         patch_file(f, self.OLD, self.NEW, dry_run=True)
         self.assertEqual(f.read_text(encoding="utf-8"), content)
+
+
+# ===========================================================================
+# app_session_files  — Claude desktop app session store discovery + patching
+# ===========================================================================
+
+class TestAppSessionFiles(unittest.TestCase):
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        # Mimic %LOCALAPPDATA%\Packages
+        self.packages = self.tmp / "Packages"
+        self.session_dir = _make_dir(
+            self.packages,
+            "Claude_pzs8sxrjxfjjc", "LocalCache", "Roaming", "Claude",
+            "claude-code-sessions", "acct-uuid", "group-uuid",
+        )
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_returns_empty_when_packages_dir_missing(self):
+        with patch.object(claude_mover, "APP_PACKAGES_DIR", self.tmp / "nope"):
+            self.assertEqual(app_session_files(), [])
+
+    def test_discovers_local_session_json_files(self):
+        f1 = self.session_dir / "local_aaa.json"
+        f2 = self.session_dir / "local_bbb.json"
+        _write(f1, "{}")
+        _write(f2, "{}")
+        # A non-matching file must be ignored.
+        _write(self.session_dir / "other.json", "{}")
+        with patch.object(claude_mover, "APP_PACKAGES_DIR", self.packages):
+            found = app_session_files()
+        self.assertEqual([p.name for p in found], ["local_aaa.json", "local_bbb.json"])
+
+    def test_patch_file_rewrites_cwd_and_origin_cwd_drive_to_unc(self):
+        old = Path(r"D:\workspace\tools\SleepNote")
+        new = Path(r"\\wsl$\Ubuntu\home\automatix\workspace\SleepNote")
+        f = self.session_dir / "local_ccc.json"
+        _write(f, json.dumps({
+            "sessionId": "ccc",
+            "cwd": str(old),
+            "originCwd": str(old),
+            "title": "SleepNote: Init",
+        }))
+        patch_file(f, old, new, dry_run=False)
+        data = json.loads(f.read_text(encoding="utf-8"))
+        self.assertEqual(data["cwd"], r"\\wsl$\Ubuntu\home\automatix\workspace\SleepNote")
+        self.assertEqual(data["originCwd"], r"\\wsl$\Ubuntu\home\automatix\workspace\SleepNote")
+        self.assertEqual(data["title"], "SleepNote: Init")
+
+    def test_unrelated_session_is_left_untouched(self):
+        old = Path(r"D:\workspace\tools\SleepNote")
+        new = Path(r"\\wsl$\Ubuntu\home\automatix\workspace\SleepNote")
+        f = self.session_dir / "local_ddd.json"
+        original = json.dumps({"cwd": r"D:\workspace\tools\OtherProject"})
+        _write(f, original)
+        self.assertEqual(patch_file(f, old, new, dry_run=False), 0)
+        self.assertEqual(f.read_text(encoding="utf-8"), original)
 
 
 # ===========================================================================
@@ -1242,6 +1304,7 @@ class TestPrintSummary(unittest.TestCase):
             "source": r"D:\workspace\old",
             "target": r"D:\workspace\new",
             "sessions_migrated": 3,
+            "app_sessions_patched": 2,
             "history_lines_patched": 7,
             "config_files_patched": config_files or [],
         }
@@ -1282,6 +1345,7 @@ class TestMain(unittest.TestCase):
         "source": r"D:\workspace\src",
         "target": r"D:\workspace\tgt",
         "sessions_migrated": 1,
+        "app_sessions_patched": 0,
         "history_lines_patched": 0,
         "config_files_patched": [],
     }
