@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import shutil
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -340,6 +341,42 @@ def patch_jsonl(file_path: Path, old_path: Path, new_path: Path, dry_run: bool) 
 
 
 # ---------------------------------------------------------------------------
+# Directory move (robocopy for long-path safety)
+# ---------------------------------------------------------------------------
+
+def _move_directory(source: Path, target: Path) -> None:
+    """Move a directory tree using robocopy to handle Windows MAX_PATH limits.
+
+    shutil.move uses CreateFileW which caps at 260 chars; robocopy uses the
+    extended-length path API internally, so files at the 260-char boundary copy
+    correctly.  Source deletion is done with shutil.rmtree because source paths
+    are unchanged (pre-existing) and therefore guaranteed under MAX_PATH.
+    """
+    result = subprocess.run(
+        [
+            "robocopy", str(source), str(target),
+            "/E",    # copy subdirectories, including empty ones
+            "/NFL",  # suppress file listing
+            "/NDL",  # suppress directory listing
+            "/NJH",  # suppress job header
+            "/NJS",  # suppress job summary
+            "/R:0",  # 0 retries on copy errors
+            "/W:0",  # 0 s wait between retries
+        ],
+        capture_output=True,
+        text=True,
+    )
+    # robocopy exit codes 0–7 mean success (varying levels of work done); 8+ mean error
+    if result.returncode >= 8:
+        if target.exists():
+            shutil.rmtree(str(target), ignore_errors=True)
+        raise RuntimeError(
+            f"robocopy failed (exit {result.returncode}):\n{result.stdout.strip()}"
+        )
+    shutil.rmtree(str(source))
+
+
+# ---------------------------------------------------------------------------
 # Migration
 # ---------------------------------------------------------------------------
 
@@ -393,7 +430,7 @@ def migrate(source: Path, target: Path, dry_run: bool) -> dict:
         # Step 3: Move project folder
         logging.info(f"Moving project folder ...")
         if not dry_run:
-            shutil.move(str(source), str(target))
+            _move_directory(source, target)
         else:
             logging.info(f"[DRY RUN] Would move: {source} -> {target}")
 
