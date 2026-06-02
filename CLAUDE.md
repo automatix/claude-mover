@@ -13,6 +13,7 @@ The correct migration order is:
 3. Move/rename the actual project folder.
 4. Update any absolute paths in `.claude/settings.json` and `.mcp.json`.
 5. Update path entries in `~/.claude/history.jsonl`.
+6. Update `~/.claude.json` (global app config — project list and GitHub repo map; this is what the Claude desktop app reads to display the "open project" path).
 
 ## Requirements
 
@@ -97,6 +98,7 @@ Example: `\\wsl.localhost\Ubuntu\home\automatix\workspace\SleepNote` → `--wsl-
 - `~/.claude/projects/<encoded-path>/` — one directory per project; contains `.jsonl` session files.
 - Path encoding: drive colon + backslash → `--`, remaining backslashes → `-`. E.g. `D:\workspace\myapp` → `D--workspace-myapp`.
 - `~/.claude/history.jsonl` — global history index; contains absolute path references that must be rewritten on move.
+- `~/.claude.json` (in the **home directory**, NOT inside `~/.claude/`) — global app config read by the Claude desktop app; stores project settings keyed by path (both backslash and forward-slash forms) and the GitHub repo → local path map. This is the file responsible for the path shown in "copy path" in the desktop app. The `backups/` folder inside `~/.claude/` contains timestamped backups of this file made before each write.
 - `.claude/` folder and `CLAUDE.md` inside the project folder travel with the folder automatically — no special handling needed.
 - `.mcp.json` may contain absolute paths and must be patched if present.
 - WSL projects accessed from Windows via `\\wsl.localhost\...` stay in the Windows `%USERPROFILE%\.claude\` store — no cross-store migration needed.

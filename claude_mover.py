@@ -19,6 +19,7 @@ APP_NAME = "ClaudeMover"
 CLAUDE_DIR = Path.home() / ".claude"
 PROJECTS_DIR = CLAUDE_DIR / "projects"
 HISTORY_FILE = CLAUDE_DIR / "history.jsonl"
+CLAUDE_JSON = Path.home() / ".claude.json"   # global app config (project list, GitHub repo map)
 LOG_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / APP_NAME / "logs"
 CHECKPOINT_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / APP_NAME / "checkpoints"
 
@@ -542,7 +543,14 @@ def migrate(source: Path, target: Path, dry_run: bool) -> dict:
             if changed:
                 logging.info(f"history.jsonl: {changed} line(s) updated")
 
-        # Step 6: Remove backup
+        # Step 6: Patch ~/.claude.json (global app config: project list + GitHub repo map)
+        if CLAUDE_JSON.exists():
+            changed = patch_file(CLAUDE_JSON, source, target, dry_run)
+            if changed:
+                summary["config_files_patched"].append(str(CLAUDE_JSON))
+                logging.info(f"Patched: {CLAUDE_JSON}")
+
+        # Step 7: Remove backup
         remove_backup(backup, dry_run)
         if not dry_run:
             _clear_checkpoint(source)
