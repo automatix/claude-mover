@@ -19,6 +19,10 @@ The correct migration order is:
 - Python `3.9+` (uses PEP 585 built-in generic types, e.g. `list[str]`)
 - Windows only — relies on `LOCALAPPDATA`, drive-letter path encoding, and `shutil.move` Windows semantics
 
+## Workflow
+
+After every PR is merged: merge it via `gh pr merge --squash --delete-branch` (or `--merge` if squash is not appropriate), then switch the local working copy back to `master` and pull.
+
 ## Commands
 
 ```bash
