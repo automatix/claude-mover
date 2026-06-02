@@ -178,3 +178,17 @@
 - **Workflow:** Issue [#17](https://github.com/automatix/claude-mover/issues/17), Branch `bugfix/desktop-app-session-store`, PR [#18](https://github.com/automatix/claude-mover/pull/18) squash-gemerged (`9009c2f`).
 
 **Result:** Tool deckt den Desktop-App-Store künftig ab. Der akute SleepNote-Fall wird vom User per `repair_app_sessions.py` bei geschlossener App behoben. Kein SemVer-Artefakt im Repo (keine Versionsdatei) — reiner Patch-Level-Fix.
+
+## `2026-06-02` – Encoding-Bug: falscher Verzeichnis-Key bei WSL/UNC + Leerzeichen/Punkten (#21)
+
+**Request:** Nach dem Move zu WSL erscheint beim Öffnen jeder Session unten der Fehler „Claude couldn't process that message — No conversation found with session ID: …". (Das ursprüngliche Trust-Dialog/Copy-Path-Problem ist gelöst.)
+
+**Done:**
+- **Akut-Diagnose:** Der alte Trust-Dialog-Pfad war nur ein einmaliger Renderer-Cache-Übergang (App-Log ab `22:26:50` durchgehend neuer WSL-Pfad). Das neue Problem ist ein **Encoding-Bug** in `encode_path`.
+- **Ursache:** Die echte CLI kodiert den `cwd` mit **einer** Regel: jedes Nicht-Alphanumerische → `-`, Groß-/Kleinschreibung bleibt. Verifiziert an Live-Verzeichnissen: `\wsl$\Ubuntu\…\SleepNote` → `--wsl--Ubuntu-…-SleepNote`; `D:\workspace\tools\Claude Mover` → `D--workspace-tools-Claude-Mover`. `encode_path` kleinschrieb dagegen Server+Share und behielt `$` (`--wsl$-ubuntu-…`); bei Laufwerkspfaden ersetzte es nur Backslashes (Leerzeichen/Punkte blieben). Dadurch landeten die `20` migrierten Sessions in einem Ordner, den die CLI nie liest. Die CLI legte beim Start selbst den korrekten Ordner `--wsl--Ubuntu-…` an.
+- **Wichtige Korrektur eines früheren Befunds:** In WSL gibt es **keine** `claude`-CLI, kein `~/.claude`, kein `~/.claude.json`. Die App führt die CLI auf der **Windows-Seite** mit UNC-`cwd` aus → Sessions bleiben im Windows-Store. Ein Windows→WSL-Move ist **keine** Cross-Store-Migration; nur der Verzeichnis-**Key** ändert sich. Die frühere `CLAUDE.md`-Annahme dazu war im Ergebnis richtig, nur die Encoding-Tabelle war falsch.
+- **Akut-Reparatur (App geschlossen):** `20` Session-`.jsonl` + Session-Unterordner + `5` Memory-Dateien aus `--wsl$-ubuntu-…` nach `--wsl--Ubuntu-…` verschoben; Backups unter `~/.claude/backups/2026-06-02_repair-wsl-encoding/`. Zwei von der App verworfene `cliSessionId`-Verknüpfungen (`local_36dbae27`→`37c39cba`, `local_f382a1bd`→`5abbc1d0`) im Desktop-App-Store wiederhergestellt. Alle `10` App-Sessions verweisen wieder auf vorhandene Transkripte.
+- **Tool-Fix:** `encode_path`-Body durch `re.sub(r"[^A-Za-z0-9]", "-", …)` ersetzt; Tests für die alte (falsche) kleingeschriebene UNC-Ausgabe korrigiert; Coverage für Leerzeichen, Punkte, Case-Erhalt und die realen `SleepNote`/`FooBarWSL`-Keys ergänzt. `147` Tests grün.
+- **Workflow:** Issue [#21](https://github.com/automatix/claude-mover/issues/21), Branch `bugfix/encode-path-universal-rule`.
+
+**Result:** `encode_path` stimmt jetzt mit der echten CLI überein (Laufwerk + UNC + Leerzeichen/Punkte). Akuter SleepNote-Fall behoben — alle Sessions wieder resümierbar. PR folgt.
