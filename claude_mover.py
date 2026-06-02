@@ -125,6 +125,52 @@ def _decode_dashed_unc_naive(dashed: str) -> Optional[Path]:
     return Path('\\\\' + s.replace('-', '\\'))
 
 
+# WSL UNC server aliases that both resolve to the same distro filesystem.
+_WSL_UNC_SERVERS = {'wsl$', 'wsl.localhost'}
+_CANONICAL_WSL_SERVER = 'wsl.localhost'
+
+
+def _canonicalize_wsl(path_str: str) -> str:
+    """Normalize a WSL UNC path string to the form the Claude desktop app uses.
+
+    Both ``\\\\wsl$\\<Distro>\\...`` and ``\\\\wsl.localhost\\<distro>\\...`` point
+    to the same WSL filesystem location, but they encode to different directory
+    keys. The desktop app always registers WSL projects as
+    ``\\\\wsl.localhost\\<distro-lowercased>\\...``, so a move target must be
+    normalized to that canonical form -- otherwise the migrated history lands
+    under a key the app never reads (see issue #23). Concretely:
+
+      - server ``wsl$`` / ``wsl.localhost`` (any case) -> ``wsl.localhost``
+      - the distro/share component               -> lowercased
+      - all remaining path components            -> unchanged
+
+    Non-WSL paths (drive letters, other UNC servers) are returned unchanged.
+    """
+    if not path_str.startswith('\\\\'):
+        return path_str
+    parts = path_str[2:].split('\\')
+    if not parts or parts[0].lower() not in _WSL_UNC_SERVERS:
+        return path_str
+    parts[0] = _CANONICAL_WSL_SERVER
+    if len(parts) > 1:
+        parts[1] = parts[1].lower()            # distro / share -> lowercase
+    return '\\\\' + '\\'.join(parts)
+
+
+def _is_noncanonical_wsl_input(raw: str) -> bool:
+    """Return True if the raw input is a WSL path that canonicalization rewrites.
+
+    Used only to emit a user-facing notice that the path form was normalized:
+      - any use of the legacy ``wsl$`` alias, or
+      - a ``wsl.localhost`` path whose distro component is not already lowercase.
+    """
+    low = raw.lower()
+    if 'wsl$' in low:
+        return True
+    m = re.search(r'[\\/]{2}wsl\.localhost[\\/]([^\\/]+)', raw, re.IGNORECASE)
+    return bool(m and m.group(1) != m.group(1).lower())
+
+
 def normalize_path(path_str: str) -> Path:
     """Normalize any of the supported path formats to a Windows Path.
 
@@ -146,7 +192,7 @@ def normalize_path(path_str: str) -> Path:
     # UNC style: \\server\... or //server/...
     m = re.match(r'^[/\\]{2}([^/\\].*)$', s)
     if m:
-        return Path('\\\\' + m.group(1).replace('/', '\\'))
+        return Path(_canonicalize_wsl('\\\\' + m.group(1).replace('/', '\\')))
 
     # Git Bash style: /c/rest/of/path
     m = re.match(r'^/([A-Za-z])/(.+)$', s)
@@ -174,10 +220,10 @@ def normalize_path(path_str: str) -> Path:
                 if ctx_dir.name.lower() == s.lower():
                     decoded = _decode_dashed_unc_naive(ctx_dir.name)
                     if decoded:
-                        return decoded
+                        return Path(_canonicalize_wsl(str(decoded)))
         decoded = _decode_dashed_unc_naive(s)
         if decoded:
-            return decoded
+            return Path(_canonicalize_wsl(str(decoded)))
 
     # Fallback: resolve relative path
     return Path(s).resolve()
@@ -678,6 +724,13 @@ def main() -> None:
 
     logging.info(f"Resolved source: {source}")
     logging.info(f"Resolved target: {target}")
+
+    for label, raw in (("source", args.source), ("target", args.target)):
+        if _is_noncanonical_wsl_input(raw):
+            resolved = source if label == "source" else target
+            logging.info(
+                f"Normalized WSL {label} to the desktop app's canonical form: {resolved}"
+            )
 
     if args.resume and not args.dry_run:
         cp = _read_checkpoint(source)
