@@ -12,7 +12,9 @@
       "Bash(gh pr create --title 'feat: implement claude-mover CLI tool' --body ' *)",
       "Bash(gh pr *)",
       "Bash(git pull *)",
-      "Bash(git stash *)"
+      "Bash(git stash *)",
+      "Bash(git tag *)",
+      "Bash(gh release create v0.1.0 claude_mover.py --title 'v0.1.0 – Initial release' --notes ' *)"
     ]
   }
 }

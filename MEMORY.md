@@ -53,3 +53,14 @@
 - SemVer-Regel als globales Memory gespeichert.
 
 **Result:** Projekt ist released und versioniert.
+
+## `2026-06-02` – README usage instructions
+
+**Request:** Add usage instructions to the README.
+
+**Done:**
+- Added Requirements, Usage, Path formats, Examples, Rollback, and Logs sections to `README.md`.
+- Also committed previously uncommitted changes: `CLAUDE.md` (architecture docs) and `.claude/settings.local.json` (git tag / gh release permissions).
+- All changes committed on branch `docs/add-usage-instructions`.
+
+**Result:** `README.md` now documents how to run the tool, all supported path formats, example invocations, and rollback/log behaviour.
