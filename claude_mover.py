@@ -165,18 +165,28 @@ def normalize_path(path_str: str) -> Path:
 # ---------------------------------------------------------------------------
 
 def _path_variants(path: Path) -> list[str]:
-    """Return all string representations of a path that may appear in files."""
+    """Return all string representations of a path that may appear in files.
+
+    6 variants are returned so that patch_content covers every form that can
+    appear in JSON, JSONL, or plain-text files:
+      - Backslash form (as-is on Windows)
+      - Forward-slash forms (3 variants: D:/, /d/, /D/ or // for UNC)
+      - Claude dashed-encoded form
+      - JSON-encoded backslash form (each backslash doubled, as stored in
+        history.jsonl "project" fields and similar JSON key-value pairs)
+    """
     p = path.resolve()
     p_str = str(p)
+    json_encoded = json.dumps(p_str)[1:-1]  # strip surrounding quotes
 
     if p_str.startswith('\\\\'):
         # UNC path: backslash, forward-slash, and dashed variants.
         # Git Bash has no UNC equivalent; forward-slash form is the closest substitute
-        # for variants 3 and 4, keeping the list length at 5 to match drive-letter paths.
+        # for variants 3 and 4.
         backslash = p_str                        # \\wsl.localhost\Ubuntu\home\myapp
         forward = p_str.replace('\\', '/')       # //wsl.localhost/Ubuntu/home/myapp
         encoded = encode_path(p)                 # --wsl-localhost-ubuntu-home-myapp
-        return [backslash, forward, forward, forward, encoded]
+        return [backslash, forward, forward, forward, encoded, json_encoded]
 
     drive = p.drive  # e.g. 'D:'
     rest_backslash = p_str[len(drive):]
@@ -188,6 +198,7 @@ def _path_variants(path: Path) -> list[str]:
         f"/{drive_letter.lower()}{rest_forward}",          # /d/workspace/myapp
         f"/{drive_letter.upper()}{rest_forward}",          # /D/workspace/myapp
         encode_path(p),                                     # D--workspace-myapp
+        json_encoded,                                       # D:\\workspace\\myapp (JSON)
     ]
 
 
