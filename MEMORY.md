@@ -64,3 +64,18 @@
 - All changes committed on branch `docs/add-usage-instructions`.
 
 **Result:** `README.md` now documents how to run the tool, all supported path formats, example invocations, and rollback/log behaviour.
+
+## `2026-06-02` – WSL UNC path support
+
+**Request:** Support WSL paths (`\\wsl.localhost\Ubuntu\...`) as source and target in claude_mover.py.
+
+**Done:**
+- Clarified: no cross-store migration needed; Windows Claude Code uses the Windows `%USERPROFILE%\.claude\` store even for WSL projects accessed via UNC.
+- Identified encoding rules from real PROJECTS_DIR entries: `\\` → `--`, server+share lowercased, `.` → `-`, path components case-preserved.
+- Implemented on branch `feature/wsl-unc-path-support` (GitHub issue [#3](https://github.com/automatix/claude-mover/issues/3)):
+  - `encode_path`: UNC branch
+  - `_decode_dashed_unc_naive` + `_UNC_DASHED_SERVERS`: decode `--wsl-...` back to UNC
+  - `normalize_path`: accept `\\...`, `//...`, and `--wsl-...`
+  - `_path_variants`: 5-variant list for UNC paths
+
+**Result:** claude_mover.py now supports Windows ↔ WSL moves in all path formats.
