@@ -24,7 +24,10 @@ Claude Code stores session history under `~/.claude/projects/`, using the **abso
 
 ## Before you run
 
-Close any active Claude Code session for the project you want to move, and close the Claude desktop app if it is running. On Windows, open file handles can prevent the folder move from completing.
+**Close every Claude instance first** — the desktop app (including its tray icon) and any running Claude Code CLI or IDE-extension sessions. This is a correctness requirement, not just a precaution, for two independent reasons:
+
+1. **File handles (Windows):** an open session for the source project holds handles on its context directory or the project folder, which can make the folder move fail.
+2. **In-memory overwrite:** the Claude desktop app keeps `~/.claude.json` **and** its own session store (`claude-code-sessions\*.json`) in memory and rewrites them on its next save. If it is running during the move, it reverts the path patches from steps `5`–`6`, so the app keeps showing the **old** path even though the move otherwise succeeded.
 
 ## Usage
 
@@ -147,7 +150,12 @@ It has no effect on **Claude.ai** (the web app) — web conversations are stored
 
 ### Must Claude be closed before running the script?
 
-Yes, as a precaution. If a Claude Code session for the source project is open, it may hold file handles on the context directory or the project folder, which can cause the move to fail on Windows. Close any active sessions and the Claude desktop app before running the script.
+Yes — completely, and for correctness, not just to avoid file-lock errors. Two things break if any Claude instance is running:
+
+- A Claude Code session for the source project may hold file handles on the folder being moved, so the move can fail on Windows.
+- The desktop app holds `~/.claude.json` and its per-session store in memory and rewrites them on save, **reverting** the path patches — so the app keeps displaying the old path even after an otherwise successful run.
+
+Close the desktop app (including the tray icon) and exit all Claude Code CLI and IDE-extension sessions before running the script. (The bundled repair scripts enforce this with a process guard; the mover itself relies on you having closed everything.)
 
 ---
 
