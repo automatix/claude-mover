@@ -178,3 +178,30 @@
 - **Workflow:** Issue [#17](https://github.com/automatix/claude-mover/issues/17), Branch `bugfix/desktop-app-session-store`, PR [#18](https://github.com/automatix/claude-mover/pull/18) squash-gemerged (`9009c2f`).
 
 **Result:** Tool deckt den Desktop-App-Store künftig ab. Der akute SleepNote-Fall wird vom User per `repair_app_sessions.py` bei geschlossener App behoben. Kein SemVer-Artefakt im Repo (keine Versionsdatei) — reiner Patch-Level-Fix.
+
+## `2026-06-02` – Encoding-Bug: falscher Verzeichnis-Key bei WSL/UNC + Leerzeichen/Punkten (#21)
+
+**Request:** Nach dem Move zu WSL erscheint beim Öffnen jeder Session unten der Fehler „Claude couldn't process that message — No conversation found with session ID: …". (Das ursprüngliche Trust-Dialog/Copy-Path-Problem ist gelöst.)
+
+**Done:**
+- **Akut-Diagnose:** Der alte Trust-Dialog-Pfad war nur ein einmaliger Renderer-Cache-Übergang (App-Log ab `22:26:50` durchgehend neuer WSL-Pfad). Das neue Problem ist ein **Encoding-Bug** in `encode_path`.
+- **Ursache:** Die echte CLI kodiert den `cwd` mit **einer** Regel: jedes Nicht-Alphanumerische → `-`, Groß-/Kleinschreibung bleibt. Verifiziert an Live-Verzeichnissen: `\wsl$\Ubuntu\…\SleepNote` → `--wsl--Ubuntu-…-SleepNote`; `D:\workspace\tools\Claude Mover` → `D--workspace-tools-Claude-Mover`. `encode_path` kleinschrieb dagegen Server+Share und behielt `$` (`--wsl$-ubuntu-…`); bei Laufwerkspfaden ersetzte es nur Backslashes (Leerzeichen/Punkte blieben). Dadurch landeten die `20` migrierten Sessions in einem Ordner, den die CLI nie liest. Die CLI legte beim Start selbst den korrekten Ordner `--wsl--Ubuntu-…` an.
+- **Wichtige Korrektur eines früheren Befunds:** In WSL gibt es **keine** `claude`-CLI, kein `~/.claude`, kein `~/.claude.json`. Die App führt die CLI auf der **Windows-Seite** mit UNC-`cwd` aus → Sessions bleiben im Windows-Store. Ein Windows→WSL-Move ist **keine** Cross-Store-Migration; nur der Verzeichnis-**Key** ändert sich. Die frühere `CLAUDE.md`-Annahme dazu war im Ergebnis richtig, nur die Encoding-Tabelle war falsch.
+- **Akut-Reparatur (App geschlossen):** `20` Session-`.jsonl` + Session-Unterordner + `5` Memory-Dateien aus `--wsl$-ubuntu-…` nach `--wsl--Ubuntu-…` verschoben; Backups unter `~/.claude/backups/2026-06-02_repair-wsl-encoding/`. Zwei von der App verworfene `cliSessionId`-Verknüpfungen (`local_36dbae27`→`37c39cba`, `local_f382a1bd`→`5abbc1d0`) im Desktop-App-Store wiederhergestellt. Alle `10` App-Sessions verweisen wieder auf vorhandene Transkripte.
+- **Tool-Fix:** `encode_path`-Body durch `re.sub(r"[^A-Za-z0-9]", "-", …)` ersetzt; Tests für die alte (falsche) kleingeschriebene UNC-Ausgabe korrigiert; Coverage für Leerzeichen, Punkte, Case-Erhalt und die realen `SleepNote`/`FooBarWSL`-Keys ergänzt. `147` Tests grün.
+- **Workflow:** Issue [#21](https://github.com/automatix/claude-mover/issues/21), Branch `bugfix/encode-path-universal-rule`.
+
+**Result:** `encode_path` stimmt jetzt mit der echten CLI überein (Laufwerk + UNC + Leerzeichen/Punkte). Akuter SleepNote-Fall behoben — alle Sessions wieder resümierbar. PR folgt.
+
+## `2026-06-03` – Kanonische WSL-Form: SleepNote von `\wsl$\Ubuntu` auf `\wsl.localhost\ubuntu` re-keyed (#23)
+
+**Request:** Beobachtung des Users: Der von uns angelegte Ordner heißt `--wsl--Ubuntu-…`, ein nativ in WSL angelegtes Projekt dagegen `--wsl-localhost-ubuntu-…`. Unterschied in der Namensstruktur erklären.
+
+**Done:**
+- **Erklärung:** Gleiche Encoding-Regel, unterschiedliche *Eingabe-Form*. Die Desktop-App registriert WSL-Projekte **kanonisch** als `\wsl.localhost\<distro-klein>\…` (Beleg: natives `FooBarWSL` → `--wsl-localhost-ubuntu-…`). SleepNote stand in der Legacy-Form `\wsl$\Ubuntu\…` (= Move-Ziel-String) → `--wsl--Ubuntu-…` (`$`+`\`→`--`, `Ubuntu` groß). Beide Aliase zeigen auf dieselbe Stelle, erzeugen aber verschiedene Keys.
+- **Risiko:** Funktioniert nur solange alle Records konsistent sind; öffnet man den Ordner später per Datei-Picker, registriert die App ihn kanonisch neu → Verlauf wieder verwaist.
+- **Re-Key (Metadaten, Ordner bleibt liegen):** `repair_wsl_canonicalize.py` (Dry-Run, Backups unter `~/.claude/backups/wsl-canonicalize-…`, `--force` für CLI-only-Fall). Umbenannt `--wsl--Ubuntu-…` → `--wsl-localhost-ubuntu-…`; `22` `.jsonl` (`7855` Tokens), `~/.claude.json`-Keys + `githubRepoPaths`, `10` App-Session-`cwd`/`originCwd`, `history.jsonl` gepatcht. Auch der **verstümmelte** Single-Backslash-Key (`\wsl$\Ubuntu\…`, von alter buggy `claude_mover`-Version) bereinigt.
+- **Verifikation:** Kanonischer Ordner mit `21` Sessions; keine `wsl$`/`Ubuntu`-Reste; alle `10` App-Sessions mit kanonischem `cwd` + vorhandenem Transkript. Übrig nur ein leerer, gesperrter Alt-Ordner `--wsl$-ubuntu-…` (harmlos, verschwindet beim Neustart) und zwei rein historische `--wsl--Ubuntu`-Erwähnungen in Transkript-Text (bewusst nicht verändert).
+- **Tool-Follow-up:** Issue [#23](https://github.com/automatix/claude-mover/issues/23) — `claude_mover` soll WSL-Ziele auf die kanonische `\wsl.localhost\<distro-klein>\…`-Form normalisieren.
+
+**Result:** SleepNote jetzt identisch strukturiert wie native WSL-Projekte; robust gegen erneutes Verwaisen. `repair_wsl_canonicalize.py` untracked (one-off, wie die anderen Repair-Skripte).

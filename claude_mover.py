@@ -77,21 +77,20 @@ def _path_to_str(path: Path) -> str:
 def encode_path(path: Path) -> str:
     """Encode a Windows absolute path to Claude's dashed directory name.
 
+    Claude Code derives the per-project directory name from the working
+    directory with a single universal rule: every character that is not an
+    ASCII letter or digit is replaced by a dash, and the case is preserved.
+    The same rule applies to drive-letter and UNC (WSL) paths alike — the
+    colon, backslashes, dots, spaces, and the ``$`` in ``\\\\wsl$\\`` are all
+    just non-alphanumeric characters mapped to ``-``.
+
     Examples:
       D:\\workspace\\myapp                    ->  D--workspace-myapp
-      \\\\wsl.localhost\\Ubuntu\\home\\myapp  ->  --wsl-localhost-ubuntu-home-myapp
+      D:\\workspace\\Claude Mover             ->  D--workspace-Claude-Mover
+      \\\\wsl.localhost\\ubuntu\\home\\myapp  ->  --wsl-localhost-ubuntu-home-myapp
+      \\\\wsl$\\Ubuntu\\home\\myapp           ->  --wsl--Ubuntu-home-myapp
     """
-    s = _path_to_str(path)
-    if s.startswith('\\\\'):
-        # UNC path: leading \\ -> --, server+share lowercased, dots and backslashes -> dashes
-        parts = [p for p in s[2:].split('\\') if p]
-        encoded = [parts[i].lower().replace('.', '-') if i < 2 else parts[i]
-                   for i in range(len(parts))]
-        return '--' + '-'.join(encoded)
-    # Drive letter path: D:\... -> D--...
-    s = re.sub(r'^([A-Za-z]):\\', lambda m: m.group(1).upper() + "--", s)
-    s = s.replace("\\", "-")
-    return s
+    return re.sub(r'[^A-Za-z0-9]', '-', _path_to_str(path))
 
 
 def _decode_dashed_naive(dashed: str) -> Optional[Path]:

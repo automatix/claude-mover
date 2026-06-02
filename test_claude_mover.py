@@ -85,23 +85,38 @@ class TestEncodePath(unittest.TestCase):
     def test_drive_letter_single_segment(self):
         self.assertEqual(encode_path(Path(r"D:\myproject")), "D--myproject")
 
-    def test_unc_wsl_localhost(self):
+    def test_drive_letter_space_becomes_dash(self):
+        # The real CLI maps spaces to dashes too (e.g. the "Claude Mover" folder).
+        self.assertEqual(
+            encode_path(Path(r"D:\workspace\tools\Claude Mover")),
+            "D--workspace-tools-Claude-Mover",
+        )
+
+    def test_drive_letter_dot_becomes_dash(self):
+        self.assertEqual(encode_path(Path(r"D:\apps\app.v2")), "D--apps-app-v2")
+
+    def test_unc_wsl_localhost_preserves_case(self):
+        # Every non-alphanumeric char -> '-'; case is preserved (not lowercased).
         result = encode_path(Path(r"\\wsl.localhost\Ubuntu\home\user\myapp"))
-        self.assertEqual(result, "--wsl-localhost-ubuntu-home-user-myapp")
+        self.assertEqual(result, "--wsl-localhost-Ubuntu-home-user-myapp")
+
+    def test_unc_wsl_localhost_lowercase_share_kept_lowercase(self):
+        result = encode_path(Path(r"\\wsl.localhost\ubuntu\home\automatix\workspace\FooBarWSL"))
+        self.assertEqual(result, "--wsl-localhost-ubuntu-home-automatix-workspace-FooBarWSL")
 
     def test_unc_wsl_dollar(self):
+        # '$' and the leading '\\' are both non-alphanumeric -> dashes.
         result = encode_path(Path(r"\\wsl$\Ubuntu\home\user\myapp"))
-        self.assertTrue(result.startswith("--"))
-        self.assertIn("wsl", result.lower())
+        self.assertEqual(result, "--wsl--Ubuntu-home-user-myapp")
+
+    def test_unc_wsl_dollar_sleepnote_real_case(self):
+        # The exact directory the real CLI creates for the moved SleepNote project.
+        result = encode_path(Path(r"\\wsl$\Ubuntu\home\automatix\workspace\SleepNote"))
+        self.assertEqual(result, "--wsl--Ubuntu-home-automatix-workspace-SleepNote")
 
     def test_unc_server_dots_become_dashes(self):
         result = encode_path(Path(r"\\wsl.localhost\Debian\projects\foo"))
         self.assertIn("wsl-localhost", result)
-
-    def test_unc_share_lowercased(self):
-        result = encode_path(Path(r"\\wsl.localhost\Ubuntu\home\myapp"))
-        self.assertIn("ubuntu", result)
-        self.assertNotIn("Ubuntu", result)
 
     def test_unc_path_components_preserve_case(self):
         result = encode_path(Path(r"\\wsl.localhost\Ubuntu\home\automatix\workspace\SleepNote"))
