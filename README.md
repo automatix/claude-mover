@@ -172,6 +172,23 @@ python claude_mover.py <source> <target> --resume
 
 A checkpoint file is written to `%LOCALAPPDATA%\ClaudeMover\checkpoints\` at the start of every migration. It records the source, target, backup path, and — on failure — the error message. The file is deleted on success.
 
+## Tests
+
+Run the test suite with:
+
+```bash
+python -m pytest test_claude_mover.py
+```
+
+To measure code coverage (requires `pytest-cov`):
+
+```bash
+pip install pytest-cov
+python -m pytest test_claude_mover.py --cov=claude_mover --cov-report=term-missing
+```
+
+The test suite contains `140` tests across `20` test classes with `92%` line coverage.
+
 ## Logs
 
 Each run writes a timestamped log file to `%LOCALAPPDATA%\ClaudeMover\logs\`. The path is printed in the summary at the end of every run.
