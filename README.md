@@ -118,7 +118,7 @@ With `--dry-run` first (recommended):
 python claude_mover.py D:\workspace\tools\SleepNote '\\wsl$\Ubuntu\home\automatix\workspace\SleepNote' --dry-run
 ```
 
-If your system uses `wsl.localhost` instead of `wsl$` (check your `~/.claude/projects/` for the prefix), replace accordingly — `wsl.localhost` contains no `$`, so quoting is not required in any shell.
+You can give the target with either WSL alias (`\\wsl$\Ubuntu\…` or `\\wsl.localhost\ubuntu\…`) — they point to the same location. Claude Mover automatically normalizes WSL targets to the form the Claude desktop app uses itself (`\\wsl.localhost\<distro-lowercased>\…`), so the session history always lands under the key the app reads. It logs a notice when it rewrites the form. The `\\wsl.localhost` form contains no `$`, so it needs no quoting in any shell.
 
 ---
 

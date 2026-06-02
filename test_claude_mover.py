@@ -21,10 +21,12 @@ from unittest.mock import MagicMock, patch
 # ---------------------------------------------------------------------------
 import claude_mover
 from claude_mover import (
+    _canonicalize_wsl,
     _checkpoint_path,
     _clear_checkpoint,
     _decode_dashed_naive,
     _decode_dashed_unc_naive,
+    _is_noncanonical_wsl_input,
     _move_directory,
     _path_variants,
     _read_checkpoint,
@@ -947,17 +949,20 @@ class TestNormalizePath(unittest.TestCase):
     def test_git_bash_uppercase_drive(self):
         self.assertEqual(normalize_path("/C/workspace/myapp"), Path(r"C:\workspace\myapp"))
 
-    def test_unc_backslash_style(self):
+    def test_unc_backslash_style_canonicalizes_distro_case(self):
+        # The distro component is lowercased to the desktop app's canonical form.
         result = normalize_path(r"\\wsl.localhost\Ubuntu\home\myapp")
-        self.assertEqual(result, Path(r"\\wsl.localhost\Ubuntu\home\myapp"))
+        self.assertEqual(str(result), r"\\wsl.localhost\ubuntu\home\myapp")
 
     def test_unc_forward_slash_style(self):
         result = normalize_path("//wsl.localhost/Ubuntu/home/myapp")
-        self.assertEqual(result, Path(r"\\wsl.localhost\Ubuntu\home\myapp"))
+        self.assertEqual(str(result), r"\\wsl.localhost\ubuntu\home\myapp")
 
-    def test_unc_forward_slash_wsl_dollar(self):
+    def test_unc_forward_slash_wsl_dollar_canonicalized(self):
+        # The legacy wsl$ alias is normalized to wsl.localhost (issue #23).
         result = normalize_path("//wsl$/Ubuntu/home/myapp")
-        self.assertIn("wsl$", str(result))
+        self.assertEqual(str(result), r"\\wsl.localhost\ubuntu\home\myapp")
+        self.assertNotIn("wsl$", str(result))
 
     def test_trailing_backslashes_stripped(self):
         self.assertEqual(
@@ -1000,6 +1005,83 @@ class TestNormalizePath(unittest.TestCase):
             with patch.object(claude_mover, "PROJECTS_DIR", fake_projects):
                 result = normalize_path("--wsl-localhost-ubuntu-home-myapp")
         self.assertIn("wsl.localhost", str(result))
+
+    def test_both_wsl_aliases_normalize_to_same_path(self):
+        """The two WSL UNC aliases collapse to one canonical Path (issue #23)."""
+        a = normalize_path(r"\\wsl$\Ubuntu\home\automatix\workspace\SleepNote")
+        b = normalize_path(r"\\wsl.localhost\ubuntu\home\automatix\workspace\SleepNote")
+        self.assertEqual(str(a), str(b))
+        self.assertEqual(encode_path(a), encode_path(b))
+        self.assertEqual(
+            encode_path(a),
+            "--wsl-localhost-ubuntu-home-automatix-workspace-SleepNote",
+        )
+
+
+# ===========================================================================
+# _canonicalize_wsl  — pure, no mocking needed
+# ===========================================================================
+
+class TestCanonicalizeWsl(unittest.TestCase):
+
+    def test_wsl_dollar_server_becomes_localhost(self):
+        self.assertEqual(
+            _canonicalize_wsl(r"\\wsl$\Ubuntu\home\myapp"),
+            r"\\wsl.localhost\ubuntu\home\myapp",
+        )
+
+    def test_localhost_distro_lowercased(self):
+        self.assertEqual(
+            _canonicalize_wsl(r"\\wsl.localhost\Ubuntu\home\myapp"),
+            r"\\wsl.localhost\ubuntu\home\myapp",
+        )
+
+    def test_already_canonical_unchanged(self):
+        s = r"\\wsl.localhost\ubuntu\home\automatix\workspace\SleepNote"
+        self.assertEqual(_canonicalize_wsl(s), s)
+
+    def test_server_alias_matched_case_insensitively(self):
+        self.assertEqual(
+            _canonicalize_wsl(r"\\WSL$\Ubuntu\home\myapp"),
+            r"\\wsl.localhost\ubuntu\home\myapp",
+        )
+
+    def test_non_distro_components_keep_case(self):
+        result = _canonicalize_wsl(r"\\wsl$\Ubuntu\home\Automatix\Workspace\SleepNote")
+        self.assertEqual(result, r"\\wsl.localhost\ubuntu\home\Automatix\Workspace\SleepNote")
+
+    def test_non_wsl_unc_server_unchanged(self):
+        s = r"\\fileserver\share\Project"
+        self.assertEqual(_canonicalize_wsl(s), s)
+
+    def test_drive_letter_path_unchanged(self):
+        s = r"D:\workspace\tools\Claude Mover"
+        self.assertEqual(_canonicalize_wsl(s), s)
+
+    def test_server_only_no_share_does_not_crash(self):
+        self.assertEqual(_canonicalize_wsl(r"\\wsl$"), r"\\wsl.localhost")
+
+
+# ===========================================================================
+# _is_noncanonical_wsl_input  — pure, no mocking needed
+# ===========================================================================
+
+class TestIsNoncanonicalWslInput(unittest.TestCase):
+
+    def test_wsl_dollar_backslash_is_noncanonical(self):
+        self.assertTrue(_is_noncanonical_wsl_input(r"\\wsl$\Ubuntu\home\myapp"))
+
+    def test_wsl_dollar_forward_slash_is_noncanonical(self):
+        self.assertTrue(_is_noncanonical_wsl_input("//wsl$/Ubuntu/home/myapp"))
+
+    def test_localhost_uppercase_distro_is_noncanonical(self):
+        self.assertTrue(_is_noncanonical_wsl_input(r"\\wsl.localhost\Ubuntu\home\myapp"))
+
+    def test_localhost_lowercase_distro_is_canonical(self):
+        self.assertFalse(_is_noncanonical_wsl_input(r"\\wsl.localhost\ubuntu\home\myapp"))
+
+    def test_drive_letter_path_is_canonical(self):
+        self.assertFalse(_is_noncanonical_wsl_input(r"D:\workspace\myapp"))
 
 
 # ===========================================================================
