@@ -192,3 +192,16 @@
 - **Workflow:** Issue [#21](https://github.com/automatix/claude-mover/issues/21), Branch `bugfix/encode-path-universal-rule`.
 
 **Result:** `encode_path` stimmt jetzt mit der echten CLI überein (Laufwerk + UNC + Leerzeichen/Punkte). Akuter SleepNote-Fall behoben — alle Sessions wieder resümierbar. PR folgt.
+
+## `2026-06-03` – Kanonische WSL-Form: SleepNote von `\wsl$\Ubuntu` auf `\wsl.localhost\ubuntu` re-keyed (#23)
+
+**Request:** Beobachtung des Users: Der von uns angelegte Ordner heißt `--wsl--Ubuntu-…`, ein nativ in WSL angelegtes Projekt dagegen `--wsl-localhost-ubuntu-…`. Unterschied in der Namensstruktur erklären.
+
+**Done:**
+- **Erklärung:** Gleiche Encoding-Regel, unterschiedliche *Eingabe-Form*. Die Desktop-App registriert WSL-Projekte **kanonisch** als `\wsl.localhost\<distro-klein>\…` (Beleg: natives `FooBarWSL` → `--wsl-localhost-ubuntu-…`). SleepNote stand in der Legacy-Form `\wsl$\Ubuntu\…` (= Move-Ziel-String) → `--wsl--Ubuntu-…` (`$`+`\`→`--`, `Ubuntu` groß). Beide Aliase zeigen auf dieselbe Stelle, erzeugen aber verschiedene Keys.
+- **Risiko:** Funktioniert nur solange alle Records konsistent sind; öffnet man den Ordner später per Datei-Picker, registriert die App ihn kanonisch neu → Verlauf wieder verwaist.
+- **Re-Key (Metadaten, Ordner bleibt liegen):** `repair_wsl_canonicalize.py` (Dry-Run, Backups unter `~/.claude/backups/wsl-canonicalize-…`, `--force` für CLI-only-Fall). Umbenannt `--wsl--Ubuntu-…` → `--wsl-localhost-ubuntu-…`; `22` `.jsonl` (`7855` Tokens), `~/.claude.json`-Keys + `githubRepoPaths`, `10` App-Session-`cwd`/`originCwd`, `history.jsonl` gepatcht. Auch der **verstümmelte** Single-Backslash-Key (`\wsl$\Ubuntu\…`, von alter buggy `claude_mover`-Version) bereinigt.
+- **Verifikation:** Kanonischer Ordner mit `21` Sessions; keine `wsl$`/`Ubuntu`-Reste; alle `10` App-Sessions mit kanonischem `cwd` + vorhandenem Transkript. Übrig nur ein leerer, gesperrter Alt-Ordner `--wsl$-ubuntu-…` (harmlos, verschwindet beim Neustart) und zwei rein historische `--wsl--Ubuntu`-Erwähnungen in Transkript-Text (bewusst nicht verändert).
+- **Tool-Follow-up:** Issue [#23](https://github.com/automatix/claude-mover/issues/23) — `claude_mover` soll WSL-Ziele auf die kanonische `\wsl.localhost\<distro-klein>\…`-Form normalisieren.
+
+**Result:** SleepNote jetzt identisch strukturiert wie native WSL-Projekte; robust gegen erneutes Verwaisen. `repair_wsl_canonicalize.py` untracked (one-off, wie die anderen Repair-Skripte).
