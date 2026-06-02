@@ -48,10 +48,18 @@ def setup_logging(dry_run: bool) -> Path:
 def encode_path(path: Path) -> str:
     """Encode a Windows absolute path to Claude's dashed directory name.
 
-    Example: D:\\workspace\\myapp  ->  D--workspace-myapp
+    Examples:
+      D:\\workspace\\myapp                    ->  D--workspace-myapp
+      \\\\wsl.localhost\\Ubuntu\\home\\myapp  ->  --wsl-localhost-ubuntu-home-myapp
     """
     s = str(path.resolve())
-    # Drive colon + backslash -> double dash
+    if s.startswith('\\\\'):
+        # UNC path: leading \\ -> --, server+share lowercased, dots and backslashes -> dashes
+        parts = [p for p in s[2:].split('\\') if p]
+        encoded = [parts[i].lower().replace('.', '-') if i < 2 else parts[i]
+                   for i in range(len(parts))]
+        return '--' + '-'.join(encoded)
+    # Drive letter path: D:\... -> D--...
     s = re.sub(r'^([A-Za-z]):\\', lambda m: m.group(1).upper() + "--", s)
     s = s.replace("\\", "-")
     return s
@@ -66,19 +74,51 @@ def _decode_dashed_naive(dashed: str) -> Optional[Path]:
     return Path(f"{drive}:\\{rest}")
 
 
+_UNC_DASHED_SERVERS: dict[str, str] = {
+    'wsl-localhost': 'wsl.localhost',
+    'wsl': 'wsl$',
+}
+
+
+def _decode_dashed_unc_naive(dashed: str) -> Optional[Path]:
+    """Best-effort decode of a Claude-dashed UNC path back to a Windows UNC Path.
+
+    Example: --wsl-localhost-ubuntu-home-automatix-workspace-SleepNote
+          -> \\\\wsl.localhost\\ubuntu\\home\\automatix\\workspace\\SleepNote
+    Lossy: dashes in component names are indistinguishable from path separators.
+    """
+    if not dashed.startswith('--'):
+        return None
+    s = dashed[2:]
+    for dashed_server, real_server in _UNC_DASHED_SERVERS.items():
+        if s.lower().startswith(dashed_server + '-'):
+            rest = s[len(dashed_server) + 1:]
+            return Path(f'\\\\{real_server}\\' + rest.replace('-', '\\'))
+    return Path('\\\\' + s.replace('-', '\\'))
+
+
 def normalize_path(path_str: str) -> Path:
-    """Normalize any of the three supported path formats to a Windows Path.
+    """Normalize any of the supported path formats to a Windows Path.
 
     Accepted formats:
-      - CMD style:          C:\\workspace\\myapp
-      - Git Bash style:     /c/workspace/myapp
-      - Claude dashed:      C--workspace-myapp
+      - CMD style:              C:\\workspace\\myapp
+      - Git Bash style:         /c/workspace/myapp
+      - Claude dashed (drive):  C--workspace-myapp
+      - UNC style:              \\\\wsl.localhost\\Ubuntu\\home\\myapp
+                                //wsl.localhost/Ubuntu/home/myapp
+                                //wsl$/Ubuntu/home/myapp
+      - Claude dashed (UNC):    --wsl-localhost-ubuntu-home-myapp
     """
     s = path_str.strip().rstrip("/\\")
 
-    # CMD style
+    # CMD style: C:\... or C:/...
     if re.match(r'^[A-Za-z]:[/\\]', s):
         return Path(s)
+
+    # UNC style: \\server\... or //server/...
+    m = re.match(r'^[/\\]{2}([^/\\].*)$', s)
+    if m:
+        return Path('\\\\' + m.group(1).replace('/', '\\'))
 
     # Git Bash style: /c/rest/of/path
     m = re.match(r'^/([A-Za-z])/(.+)$', s)
@@ -87,9 +127,8 @@ def normalize_path(path_str: str) -> Path:
         rest = m.group(2).replace("/", "\\")
         return Path(f"{drive}:\\{rest}")
 
-    # Claude dashed style: C--workspace-myapp
+    # Claude dashed drive style: C--workspace-myapp
     if re.match(r'^[A-Za-z]--', s):
-        # Prefer a match against known Claude context dirs to resolve dash ambiguity
         if PROJECTS_DIR.exists():
             for ctx_dir in PROJECTS_DIR.iterdir():
                 if ctx_dir.name.lower() == s.lower():
@@ -97,6 +136,18 @@ def normalize_path(path_str: str) -> Path:
                     if decoded:
                         return decoded
         decoded = _decode_dashed_naive(s)
+        if decoded:
+            return decoded
+
+    # Claude dashed UNC style: --wsl-localhost-ubuntu-...
+    if s.startswith('--'):
+        if PROJECTS_DIR.exists():
+            for ctx_dir in PROJECTS_DIR.iterdir():
+                if ctx_dir.name.lower() == s.lower():
+                    decoded = _decode_dashed_unc_naive(ctx_dir.name)
+                    if decoded:
+                        return decoded
+        decoded = _decode_dashed_unc_naive(s)
         if decoded:
             return decoded
 
@@ -111,14 +162,24 @@ def normalize_path(path_str: str) -> Path:
 def _path_variants(path: Path) -> list[str]:
     """Return all string representations of a path that may appear in files."""
     p = path.resolve()
-    drive = p.drive  # e.g. 'D:'
-    rest_backslash = str(p)[len(drive):]           # e.g. '\\workspace\\myapp'
-    rest_forward = rest_backslash.replace("\\", "/")  # e.g. '/workspace/myapp'
-    drive_letter = drive[0]
+    p_str = str(p)
 
+    if p_str.startswith('\\\\'):
+        # UNC path: backslash, forward-slash, and dashed variants.
+        # Git Bash has no UNC equivalent; forward-slash form is the closest substitute
+        # for variants 3 and 4, keeping the list length at 5 to match drive-letter paths.
+        backslash = p_str                        # \\wsl.localhost\Ubuntu\home\myapp
+        forward = p_str.replace('\\', '/')       # //wsl.localhost/Ubuntu/home/myapp
+        encoded = encode_path(p)                 # --wsl-localhost-ubuntu-home-myapp
+        return [backslash, forward, forward, forward, encoded]
+
+    drive = p.drive  # e.g. 'D:'
+    rest_backslash = p_str[len(drive):]
+    rest_forward = rest_backslash.replace("\\", "/")
+    drive_letter = drive[0]
     return [
-        str(p),                                             # D:\workspace\myapp
-        str(p).replace("\\", "/"),                         # D:/workspace/myapp
+        p_str,                                              # D:\workspace\myapp
+        p_str.replace("\\", "/"),                          # D:/workspace/myapp
         f"/{drive_letter.lower()}{rest_forward}",          # /d/workspace/myapp
         f"/{drive_letter.upper()}{rest_forward}",          # /D/workspace/myapp
         encode_path(p),                                     # D--workspace-myapp
