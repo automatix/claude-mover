@@ -12,9 +12,10 @@ Claude Code stores session history under `~/.claude/projects/`, using the **abso
 2. **Rewrite** all path strings inside the `.jsonl` session files
 3. **Move** the project folder itself
 4. **Patch** absolute paths in `.claude/settings.json` and `.mcp.json` inside the project
-5. **Update** path entries in `~/.claude/history.jsonl`
+5. **Update** path entries in `~/.claude/history.jsonl` and `~/.claude.json`
+6. **Patch** `cwd`/`originCwd` in the Claude **desktop app** session store (separate from `~/.claude/` — this is what drives the app's trust dialog, "Show in Explorer", and "Copy path")
 
-**What it does NOT do:** The session files themselves stay where they are — inside `%USERPROFILE%\.claude\projects\` on Windows. Claude Mover only **renames** that directory and rewrites the path strings inside it. No session data is moved to a different store, even when the project is moved to WSL.
+**What it does NOT do:** The session history files themselves stay where they are — inside `%USERPROFILE%\.claude\projects\` on Windows. Claude Mover only **renames** that directory and rewrites the path strings inside it. No conversation data is moved to a different store, even when the project is moved to WSL. (The Claude desktop app additionally keeps a small per-session `cwd` pointer in its own store; Claude Mover patches that pointer too — see step `6` above.)
 
 ## Requirements
 
@@ -140,7 +141,7 @@ Yes, fully. Claude Code will find all previous sessions at the new path exactly 
 
 ### Does this work with the Claude desktop app and IDE extensions?
 
-Claude Code CLI, the VS Code and JetBrains extensions, and the Claude desktop app all share the same `~/.claude/projects/` store. A move performed with Claude Mover is transparent to all of them.
+Claude Code CLI, the VS Code and JetBrains extensions, and the Claude desktop app all share the same `~/.claude/projects/` store for session history. The Claude desktop app additionally keeps its own per-session `cwd`/`originCwd` pointers in a separate store (`%LOCALAPPDATA%\Packages\Claude_*\...\claude-code-sessions\`), which is what its trust dialog, "Show in Explorer", and "Copy path" rely on. Claude Mover patches that store too, so a move is transparent to all of them. **Note:** the desktop app must be fully closed when you run the move, otherwise it rewrites these pointers from memory and reverts the change.
 
 It has no effect on **Claude.ai** (the web app) — web conversations are stored server-side and are unrelated to the local project store.
 
@@ -187,7 +188,7 @@ pip install pytest-cov
 python -m pytest test_claude_mover.py --cov=claude_mover --cov-report=term-missing
 ```
 
-The test suite contains `140` tests across `20` test classes with `92%` line coverage.
+The test suite contains `144` tests across `21` test classes with `92%` line coverage.
 
 ## Logs
 
