@@ -71,9 +71,10 @@ The file is organized into clearly delimited sections:
 
 - On any failure, the rollback now cleans up all three artefacts: restores the source context from backup, deletes the stale target context, and removes any partial project copy at the target location using `_rmtree_robust`.
 - A checkpoint file (`%LOCALAPPDATA%\ClaudeMover\checkpoints\<source-encoded>.json`) is written after the backup step and updated with the error message on failure. It is deleted on success. Running with `--resume` reads this checkpoint, cleans up stale artefacts, and restarts the migration cleanly.
-- `_path_variants` emits `5` representations for each path so that `patch_content` replaces every form that could appear in JSON or JSONL files:
-  - Drive-letter paths: `D:\p`, `D:/p`, `/d/p`, `/D/p`, `D--p`
-  - UNC paths: `\\server\share\p`, `//server/share/p` (×3, no Git Bash equivalent), `--server-share-p`
+- `_path_variants` emits `6` representations for each path so that `patch_content` replaces every form that could appear in JSON or JSONL files:
+  - Drive-letter paths: `D:\p`, `D:/p`, `/d/p`, `/D/p`, `D--p`, `D:\\p` (JSON-encoded)
+  - UNC paths: `\\server\share\p`, `//server/share/p` (×3, no Git Bash equivalent), `--server-share-p`, `\\\\server\\share\\p` (JSON-encoded)
+  - The JSON-encoded 6th variant is what `history.jsonl` uses for its `"project"` field (each backslash doubled).
 - The Claude context directory is renamed **before** session files are patched; if patching targets the renamed directory, `dry_run` mode reads from the original to avoid mutating state.
 - Backup is created before any write and removed only on full success. On any exception, `restore_backup` puts the context directory back so the source project remains intact.
 
