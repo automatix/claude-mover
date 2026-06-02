@@ -79,3 +79,14 @@
   - `_path_variants`: 5-variant list for UNC paths
 
 **Result:** claude_mover.py now supports Windows ↔ WSL moves in all path formats.
+
+## `2026-06-02` – MAX_PATH fix: robocopy for directory move
+
+**Request:** Migration to `\\wsl$\Ubuntu\...` failed with `[WinError 3]` for files with very long names in `vendor/composer/`.
+
+**Done:**
+- Root cause: `shutil.move` uses `CreateFileW` (260-char `MAX_PATH` limit). The UNC prefix `\\wsl$\Ubuntu\home\automatix\workspace\SleepNote\` (49 chars) plus the long vendor path pushed two PHP filenames to exactly 260 chars — one over the null-terminator limit.
+- Fix: replaced `shutil.move` with a new `_move_directory(source, target)` helper that uses `robocopy /E` (which uses the Windows extended-length path API internally) followed by `shutil.rmtree(source)` (source paths unchanged, guaranteed under `MAX_PATH`).
+- Branch: `bugfix/long-path-robocopy`.
+
+**Result:** Moves to UNC targets with long file paths now succeed.
