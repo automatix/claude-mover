@@ -165,3 +165,16 @@
 - **Git-Cleanup:** `.coverage` (pytest-cov Artefakt) + `.claude/settings.local.json` (Machine-spezifisch) zu `.gitignore` hinzugefügt. `.claude/settings.local.json` untracked. Globale `CLAUDE.md` aktualisiert: `settings.local.json` soll gitignoriert, nicht committet werden.
 
 **Result:** Diagnose-Dokumentation (`manual-fix.md`, `repair_claude_json.py`) bereit für Benutzer-Ausführung. Repo sauber, Git-Instruktionen aktualisiert. User wird mit geschlossener Claude-App den `repair_claude_json.py` laufen lassen und dann testen.
+
+## `2026-06-02` – Eigentliche Ursache gefunden: Desktop-App-Session-Store (#17 / PR #18)
+
+**Request:** Trust-Dialog zeigt nach dem Move weiter den alten Pfad `D:\workspace\tools\SleepNote`, „Copy path" liefert den alten Pfad, „Show in Explorer" öffnet nichts — obwohl der vorherige `~/.claude.json`-Fix lief. Grundlegend beheben (auch im Tool), in Branch + PR.
+
+**Done:**
+- **Korrektur der vorherigen Diagnose:** Der `~/.claude.json`-Key war **nicht** die wahre/alleinige Ursache. Beleg über Zeitstempel: Screenshots `17:47`, Repair erst `21:36`, App-Log zeigt das Problem noch `21:37`. `~/.claude.json`, `projects/`, `history.jsonl` und alle Session-`cwd` sind bereits sauber auf `\\wsl$\...` migriert.
+- **Wahre Ursache:** Die Claude-Desktop-App (MSIX `Claude_pzs8sxrjxfjjc`) hat einen **eigenen** Session-Store, getrennt von `~/.claude/`: `%LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming\Claude\claude-code-sessions\<acct>\<group>\local_<id>.json`. Jede Datei hat `cwd`/`originCwd`. `10` SleepNote-Sessions standen noch auf dem alten Pfad. App-Log beweist die Kausalkette: `LocalSessions.checkTrust: cwd=...` und `Failed to warm session ...: Working directory no longer exists`.
+- **Tool-Fix:** Neuer Migrationsschritt 7 + `app_session_files()` in `claude_mover.py`; nutzt die bestehende `patch_file`/`patch_content`-Maschinerie. Tests (`TestAppSessionFiles`), `144` Tests / `21` Klassen / `92%` Coverage. Doku (`CLAUDE.md`, `README.md`) korrigiert — frühere Behauptung „alle Clients teilen sich nur `~/.claude/projects/`" war falsch.
+- **Akut-Reparatur:** `repair_app_sessions.py` (analog zu `repair_claude_json.py`) — patcht die `10` Session-Dateien, Prozess-Guard, Backups unter `app-sessions-repair-<timestamp>/`. Untracked (maschinenspezifisch).
+- **Workflow:** Issue [#17](https://github.com/automatix/claude-mover/issues/17), Branch `bugfix/desktop-app-session-store`, PR [#18](https://github.com/automatix/claude-mover/pull/18) squash-gemerged (`9009c2f`).
+
+**Result:** Tool deckt den Desktop-App-Store künftig ab. Der akute SleepNote-Fall wird vom User per `repair_app_sessions.py` bei geschlossener App behoben. Kein SemVer-Artefakt im Repo (keine Versionsdatei) — reiner Patch-Level-Fix.
