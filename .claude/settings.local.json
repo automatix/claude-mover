@@ -19,7 +19,13 @@
       "Bash(echo \"exit: $?\")",
       "Bash(git fetch *)",
       "Bash(git rebase *)",
-      "Bash(GIT_EDITOR=true git rebase --continue)"
+      "Bash(GIT_EDITOR=true git rebase --continue)",
+      "Bash(gh issue create --title 'fix: shutil.move fails with MAX_PATH limit when target is UNC path' --body ' *)",
+      "Bash(Write-Host Run these in your PowerShell to check state: *)",
+      "Bash(gh issue create --title 'fix: rollback leaves stale target context and partial project copy' --body ' *)",
+      "Bash(gh api *)",
+      "Bash(git cherry-pick *)",
+      "Bash(gh issue create --title 'fix: [WinError 5] Access is denied when deleting source with .git directory' --body ' *)"
     ]
   }
 }
