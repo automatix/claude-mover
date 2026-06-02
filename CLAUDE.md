@@ -57,7 +57,7 @@ The file is organized into clearly delimited sections:
 | Section | Responsibility |
 |---|---|
 | **Logging** | File + stdout logging setup; dry-run prefix |
-| **Path utilities** | `encode_path` (absolute path → dashed key), `normalize_path` (accepts all path formats), `_decode_dashed_naive`, `_decode_dashed_unc_naive`, `_UNC_DASHED_SERVERS` |
+| **Path utilities** | `encode_path` (absolute path → dashed key), `normalize_path` (accepts all path formats), `_canonicalize_wsl` (WSL UNC → canonical `wsl.localhost` form), `_is_noncanonical_wsl_input`, `_decode_dashed_naive`, `_decode_dashed_unc_naive`, `_UNC_DASHED_SERVERS` |
 | **Path variant helpers** | `_path_variants` returns the `5` string representations of a path that may appear in files; `patch_content` replaces all of them in a string |
 | **Validation** | `validate_source` / `validate_target` — existence checks with actionable error messages |
 | **Parent directory** | `ensure_parent` — interactive prompt when the target parent is missing |
@@ -122,7 +122,7 @@ Examples:
 - `.claude/` folder and `CLAUDE.md` inside the project folder travel with the folder automatically — no special handling needed.
 - `.mcp.json` may contain absolute paths and must be patched if present.
 - WSL projects accessed from Windows via `\\wsl.localhost\...` stay in the Windows `%USERPROFILE%\.claude\` store — no cross-store migration needed. There is no `claude` CLI (and no `~/.claude`) inside the distro; the desktop app runs the CLI on the Windows side with the UNC `cwd`.
-- **Canonical WSL form:** the desktop app registers a WSL project as `\\wsl.localhost\<distro-lowercased>\...` (e.g. `\\wsl.localhost\ubuntu\...`). The legacy alias `\\wsl$\Ubuntu\...` points to the same location but encodes to a **different** key (`--wsl--Ubuntu-...` vs `--wsl-localhost-ubuntu-...`). A move whose target uses the legacy alias works but is non-canonical and risks re-orphaning if the folder is later re-opened via the app's file picker. Move targets should be normalised to the canonical form — see issue `#23`.
+- **Canonical WSL form:** the desktop app registers a WSL project as `\\wsl.localhost\<distro-lowercased>\...` (e.g. `\\wsl.localhost\ubuntu\...`). The legacy alias `\\wsl$\Ubuntu\...` points to the same location but encodes to a **different** key (`--wsl--Ubuntu-...` vs `--wsl-localhost-ubuntu-...`); a move whose target used the legacy alias would be non-canonical and could re-orphan if the folder is later re-opened via the app's file picker. `normalize_path` therefore runs `_canonicalize_wsl` on every WSL UNC path: server `wsl$`/`wsl.localhost` → `wsl.localhost` and the distro component → lowercase. So `\\wsl$\Ubuntu\...` and `\\wsl.localhost\ubuntu\...` both resolve to the single canonical key `--wsl-localhost-ubuntu-...`, regardless of which alias/casing was typed (issue `#23`). `main` logs a notice when an input form was rewritten.
 
 ## Tests
 
@@ -132,7 +132,7 @@ Run the test suite with:
 python -m pytest test_claude_mover.py
 ```
 
-`test_claude_mover.py` contains `147` tests across `21` test classes with `92%` line coverage. Coverage is measured via `pytest-cov` (`pip install pytest-cov`).
+`test_claude_mover.py` contains `161` tests across `23` test classes with `92%` line coverage. Coverage is measured via `pytest-cov` (`pip install pytest-cov`).
 
 The uncovered lines (`ensure_parent` interactive prompt, `if __name__ == "__main__"`) require interactive `input()` mocking or direct script execution and are intentionally left for manual verification via `--dry-run`.
 
