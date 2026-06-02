@@ -153,3 +153,15 @@
 - **README:** `Tests`-Abschnitt hinzugefügt mit Anleitung (`python -m pytest test_claude_mover.py`), Optional `pytest-cov`, Hinweis auf `140` Tests / `92%` Coverage.
 
 **Result:** SleepNote-Kontext vollständig sauber (`0` korrupte Tokens). Verbleibende `150` Treffer sind Artefakte der Live-Claude-Mover-Session (diese Analyse mitgeloggt) und `history.jsonl` (Fließtext-Zitate); keine echten Pfadreferenzen.
+
+## `2026-06-02` – Diagnose: altes .claude.json-Key + Git-Cleanup
+
+**Request:** Nach dem Migrations-Fix: Desktop-App zeigt beim Trust-Dialog und bei "Copy path" immer noch den alten Pfad `D:\workspace\tools\SleepNote`. Diagnose durchführen und Instruktionen für manuellen Fix erarbeiten.
+
+**Done:**
+- **Diagnose:** Die einzige verbleibende Quelle des alten Pfads ist ein verwaister Projekt-Key in `~/.claude.json`: `projects["D:\workspace\tools\SleepNote"]` neben den korrekten WSL-Keys (`\\wsl$\...`, `//wsl$/...`). Die Desktop-App liest `~/.claude.json` für die Pfad-Anzeige. Session-`cwd`-Felder, `githubRepoPaths` und das Kontext-Verzeichnis sind korrekt — nur dieser globale Config-Key ist alt.
+- **Ursache:** `claude_mover.py` Schritt 6 patcht `~/.claude.json` via String-Replacement des Projekt-Keys. Wenn die App einen neuen Key bereits angelegt hatte (weil das WSL-Projekt vorher schon geöffnet wurde), entsteht ein Duplikat und der alte Key bleibt.
+- **Manueller Fix:** `repair_claude_json.py` geschrieben — entfernt nur den verwaisten `D:\`-Key, behält beide WSL-Keys. Prozess-Guard: weigert sich, wenn `claude.exe` noch läuft (würde In-Memory-Kopie überschreiben). Backup vor Änderung.
+- **Git-Cleanup:** `.coverage` (pytest-cov Artefakt) + `.claude/settings.local.json` (Machine-spezifisch) zu `.gitignore` hinzugefügt. `.claude/settings.local.json` untracked. Globale `CLAUDE.md` aktualisiert: `settings.local.json` soll gitignoriert, nicht committet werden.
+
+**Result:** Diagnose-Dokumentation (`manual-fix.md`, `repair_claude_json.py`) bereit für Benutzer-Ausführung. Repo sauber, Git-Instruktionen aktualisiert. User wird mit geschlossener Claude-App den `repair_claude_json.py` laufen lassen und dann testen.
