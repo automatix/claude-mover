@@ -141,3 +141,15 @@
 - **GitHub Issue [#15](https://github.com/automatix/claude-mover/issues/15)** erstellt; Branch `bugfix/session-repatching-and-tests`.
 
 **Result:** `140` Tests bestehen, Coverage `92%` (über dem Ziel von `80%`). PR folgt.
+
+## `2026-06-02` – Reparatur korrupter WSL-Pfade + README-Ergänzung
+
+**Request:** Verbleibende `87` Treffer von `SleepNote+tools` untersuchen; `D:\\wsl$\\Ubuntu` (falsch-korrupt) identifizieren und reparieren; README um Test-Anleitung ergänzen.
+
+**Done:**
+- **Root-Cause-Analyse:** Der alte Code `str(path.resolve())` bei `\\wsl$\...`-Paths: `pathlib` verschluckte den führenden `\` (Parser kann `wsl$` nicht parsen), Rest wurde gegen `D:` aufgelöst → `D:\wsl$\Ubuntu\...` (nie existent). Ein früherer Migrationslauf schrieb diesen korrupten Pfad in **alle** SleepNote-Session-Dateien.
+- **Daten-Reparatur:** `21` SleepNote-Session-Dateien gescannt; `7599` korrupte Tokens in `5` Kodierungen (`D:\\wsl$`, `D:\\\\wsl$`, `D:/wsl$`, `D--wsl$`) identifiziert und durch korrekten UNC-Pfad `\\wsl$\Ubuntu\...` ersetzt. JSON-Validität jeder Zeile sichergestellt; Backups unter `%USERPROFILE%\.claude\backups\wsl-path-repair\` angelegt.
+- **Code-Verifikation:** Aktueller Code (`_path_to_str`-Helper, fixes von v0.1.1) produziert diese Korruption nicht mehr — getestet mit `_path_variants(\\wsl$\...)`.
+- **README:** `Tests`-Abschnitt hinzugefügt mit Anleitung (`python -m pytest test_claude_mover.py`), Optional `pytest-cov`, Hinweis auf `140` Tests / `92%` Coverage.
+
+**Result:** SleepNote-Kontext vollständig sauber (`0` korrupte Tokens). Verbleibende `150` Treffer sind Artefakte der Live-Claude-Mover-Session (diese Analyse mitgeloggt) und `history.jsonl` (Fließtext-Zitate); keine echten Pfadreferenzen.
