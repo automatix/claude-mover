@@ -23,6 +23,12 @@ CLAUDE_JSON = Path.home() / ".claude.json"   # global app config (project list, 
 LOG_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / APP_NAME / "logs"
 CHECKPOINT_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / APP_NAME / "checkpoints"
 
+# Per-session metadata store of the Claude desktop app (MSIX package). Each
+# local_<id>.json holds cwd/originCwd, which survive a folder move and otherwise
+# keep pointing at the old path (driving the trust dialog and "Copy path").
+APP_PACKAGES_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Packages"
+APP_SESSION_GLOB = "Claude_*/LocalCache/Roaming/Claude/claude-code-sessions/**/local_*.json"
+
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -369,6 +375,20 @@ def patch_jsonl(file_path: Path, old_path: Path, new_path: Path, dry_run: bool) 
     return changed
 
 
+def app_session_files() -> list[Path]:
+    """Return every Claude desktop app per-session metadata file.
+
+    The MSIX desktop app keeps its own session store, separate from ~/.claude/:
+        %LOCALAPPDATA%\\Packages\\Claude_*\\LocalCache\\Roaming\\Claude\\
+            claude-code-sessions\\<account>\\<group>\\local_<id>.json
+    Each file holds cwd/originCwd, which survive a folder move and otherwise
+    keep pointing at the old path. Returns an empty list when no store exists.
+    """
+    if not APP_PACKAGES_DIR.exists():
+        return []
+    return sorted(APP_PACKAGES_DIR.glob(APP_SESSION_GLOB))
+
+
 # ---------------------------------------------------------------------------
 # Directory move (robocopy for long-path safety)
 # ---------------------------------------------------------------------------
@@ -491,6 +511,7 @@ def migrate(source: Path, target: Path, dry_run: bool) -> dict:
         "sessions_migrated": 0,
         "config_files_patched": [],
         "history_lines_patched": 0,
+        "app_sessions_patched": 0,
     }
 
     # --- Validate ---
@@ -563,7 +584,20 @@ def migrate(source: Path, target: Path, dry_run: bool) -> dict:
                 summary["config_files_patched"].append(str(CLAUDE_JSON))
                 logging.info(f"Patched: {CLAUDE_JSON}")
 
-        # Step 7: Remove backup
+        # Step 7: Patch the Claude desktop app session store (cwd/originCwd).
+        # This store lives outside ~/.claude/ and is what drives the app's
+        # trust dialog, "Show in Explorer", and "Copy path".
+        app_files = app_session_files()
+        if app_files:
+            logging.info(f"Patching {len(app_files)} desktop app session file(s) ...")
+            for sf in app_files:
+                changed = patch_file(sf, source, target, dry_run)
+                if changed:
+                    summary["app_sessions_patched"] += 1
+                    summary["config_files_patched"].append(str(sf))
+                    logging.info(f"  {sf.name}: cwd/originCwd updated")
+
+        # Step 8: Remove backup
         remove_backup(backup, dry_run)
         if not dry_run:
             _clear_checkpoint(source)
@@ -599,6 +633,7 @@ def print_summary(summary: dict, log_file: Path, dry_run: bool) -> None:
     print(f"  Source:                {summary['source']}")
     print(f"  Target:                {summary['target']}")
     print(f"  Sessions migrated:     {summary['sessions_migrated']}")
+    print(f"  App sessions patched:  {summary['app_sessions_patched']}")
     print(f"  History lines patched: {summary['history_lines_patched']}")
     if summary["config_files_patched"]:
         print(f"  Config files patched:  {len(summary['config_files_patched'])}")
