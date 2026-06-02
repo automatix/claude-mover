@@ -51,6 +51,23 @@ def setup_logging(dry_run: bool) -> Path:
 # Path utilities
 # ---------------------------------------------------------------------------
 
+def _path_to_str(path: Path) -> str:
+    """Return the canonical string for path, restoring the UNC \\\\ prefix.
+
+    pathlib on Windows does not recognise \\\\wsl$\\... as a UNC path (the '$'
+    in the server name confuses the parser) and strips one leading backslash,
+    turning \\\\server\\share into \\server\\share.  This helper detects that
+    case and restores the correct form before any further processing.
+    For normal drive-letter paths, resolve() is called so relative paths work.
+    """
+    raw = str(path)
+    if raw.startswith('\\\\'):
+        return raw                        # already a well-formed UNC
+    if raw.startswith('\\') and not (len(raw) >= 2 and raw[1] == ':'):
+        return '\\' + raw                 # restore the stripped leading backslash
+    return str(path.resolve())            # drive-letter path: resolve is safe
+
+
 def encode_path(path: Path) -> str:
     """Encode a Windows absolute path to Claude's dashed directory name.
 
@@ -58,7 +75,7 @@ def encode_path(path: Path) -> str:
       D:\\workspace\\myapp                    ->  D--workspace-myapp
       \\\\wsl.localhost\\Ubuntu\\home\\myapp  ->  --wsl-localhost-ubuntu-home-myapp
     """
-    s = str(path.resolve())
+    s = _path_to_str(path)
     if s.startswith('\\\\'):
         # UNC path: leading \\ -> --, server+share lowercased, dots and backslashes -> dashes
         parts = [p for p in s[2:].split('\\') if p]
@@ -176,8 +193,7 @@ def _path_variants(path: Path) -> list[str]:
       - JSON-encoded backslash form (each backslash doubled, as stored in
         history.jsonl "project" fields and similar JSON key-value pairs)
     """
-    p = path.resolve()
-    p_str = str(p)
+    p_str = _path_to_str(path)
     json_encoded = json.dumps(p_str)[1:-1]  # strip surrounding quotes
 
     if p_str.startswith('\\\\'):
@@ -186,9 +202,10 @@ def _path_variants(path: Path) -> list[str]:
         # for variants 3 and 4.
         backslash = p_str                        # \\wsl.localhost\Ubuntu\home\myapp
         forward = p_str.replace('\\', '/')       # //wsl.localhost/Ubuntu/home/myapp
-        encoded = encode_path(p)                 # --wsl-localhost-ubuntu-home-myapp
+        encoded = encode_path(path)              # --wsl-localhost-ubuntu-home-myapp
         return [backslash, forward, forward, forward, encoded, json_encoded]
 
+    p = path.resolve()
     drive = p.drive  # e.g. 'D:'
     rest_backslash = p_str[len(drive):]
     rest_forward = rest_backslash.replace("\\", "/")
@@ -334,11 +351,7 @@ def patch_file(file_path: Path, old_path: Path, new_path: Path, dry_run: bool) -
         return 0
     if not dry_run:
         file_path.write_text(patched, encoding="utf-8")
-    return text.count("\n") - text.replace(
-        text, patched
-    ).count("\n") if text != patched else sum(
-        1 for a, b in zip(text.splitlines(), patched.splitlines()) if a != b
-    ) or 1
+    return 1
 
 
 def patch_jsonl(file_path: Path, old_path: Path, new_path: Path, dry_run: bool) -> int:
