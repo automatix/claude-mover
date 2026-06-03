@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -227,6 +228,59 @@ def normalize_path(path_str: str) -> Path:
 
     # Fallback: resolve relative path
     return Path(s).resolve()
+
+
+# ---------------------------------------------------------------------------
+# WSL path translation (for native moves via wsl.exe)
+# ---------------------------------------------------------------------------
+# robocopy over the \\wsl$ / \\wsl.localhost 9P redirector silently drops files
+# under load and cannot replicate Linux symlinks, which causes data loss. For
+# any move touching WSL we instead drive the copy natively inside the distro via
+# wsl.exe, which needs the path as seen from Linux (a /home/... path for a WSL
+# endpoint, or a /mnt/<drive>/... path for a Windows drive endpoint).
+
+_WSL_UNC_RE = re.compile(r'^\\\\(?:wsl\$|wsl\.localhost)\\([^\\]+)(?:\\(.*))?$',
+                         re.IGNORECASE)
+
+
+def _wsl_endpoint(path: Path) -> Optional[tuple[str, str]]:
+    """If ``path`` is a WSL UNC path, return ``(distro, linux_path)``; else None.
+
+    ``\\\\wsl.localhost\\Ubuntu\\home\\me\\app`` -> ``("Ubuntu", "/home/me/app")``.
+    The distro is returned as written; the Linux path uses forward slashes.
+    """
+    m = _WSL_UNC_RE.match(_path_to_str(path))
+    if not m:
+        return None
+    distro = m.group(1)
+    rest = (m.group(2) or "").replace("\\", "/").rstrip("/")
+    return distro, ("/" + rest if rest else "/")
+
+
+def _drive_to_wsl_mount(path: Path) -> Optional[str]:
+    """Translate a Windows drive path to its WSL ``/mnt`` mount point, or None.
+
+    ``D:\\workspace\\app`` -> ``/mnt/d/workspace/app`` (reachable from any distro).
+    """
+    m = re.match(r'^([A-Za-z]):[\\/](.*)$', _path_to_str(path))
+    if not m:
+        return None
+    drive = m.group(1).lower()
+    rest = m.group(2).replace("\\", "/").rstrip("/")
+    return f"/mnt/{drive}/{rest}" if rest else f"/mnt/{drive}"
+
+
+def _wsl_path_in_distro(path: Path, distro: str) -> Optional[str]:
+    """Path as seen inside ``distro``, or None if it is not reachable there.
+
+    - A WSL UNC path in the *same* distro -> its Linux path.
+    - A Windows drive path                -> its ``/mnt`` mount (any distro).
+    - A WSL UNC path in a *different* distro -> None (not cross-mounted).
+    """
+    ep = _wsl_endpoint(path)
+    if ep:
+        return ep[1] if ep[0].lower() == distro.lower() else None
+    return _drive_to_wsl_mount(path)
 
 
 # ---------------------------------------------------------------------------
@@ -458,14 +512,206 @@ def _remove_readonly(func, path, exc_info) -> None:
     func(path)
 
 
-def _move_directory(source: Path, target: Path) -> None:
-    """Move a directory tree using robocopy to handle Windows MAX_PATH limits.
+# --- Copy verification ----------------------------------------------------
+# A directory move copies the tree, then deletes the source. If the copy is
+# silently incomplete (e.g. robocopy over the WSL 9P redirector dropping
+# writes) deleting the source destroys data. Every move therefore builds a
+# manifest of both trees and confirms each source entry reached the target
+# *before* the source is removed. Manifest entries are keyed by relative POSIX
+# path and carry (kind, size): kind is 'f' (file), 'l' (symlink), or 'd'
+# (directory); size is the byte size for files only (directory sizes are
+# filesystem-dependent and not comparable across volumes, so they are ignored).
 
-    shutil.move uses CreateFileW which caps at 260 chars; robocopy uses the
-    extended-length path API internally, so files at the 260-char boundary copy
-    correctly.  Source deletion uses _remove_readonly to handle read-only files
-    (e.g. .git/objects) that shutil.rmtree cannot delete by default on Windows.
+def _manifest_windows(root: Path) -> dict[str, tuple[str, int]]:
+    """Build a copy-verification manifest by walking ``root`` on Windows."""
+    manifest: dict[str, tuple[str, int]] = {}
+    if not root.exists():
+        return manifest
+    for dirpath, dirnames, filenames in os.walk(root):  # followlinks=False
+        base = Path(dirpath)
+        for name in dirnames + filenames:
+            p = base / name
+            rel = p.relative_to(root).as_posix()
+            if p.is_symlink():
+                manifest[rel] = ("l", 0)
+            elif p.is_dir():
+                manifest[rel] = ("d", 0)
+            else:
+                try:
+                    manifest[rel] = ("f", p.stat().st_size)
+                except OSError:
+                    manifest[rel] = ("f", -1)
+    return manifest
+
+
+# find -printf format used to enumerate a tree inside WSL: type, size, path.
+_WSL_FIND_PRINTF = r"find . -mindepth 1 -printf '%y\t%s\t%p\n'"
+
+
+def _run_wsl_bash(distro: str, script: str) -> subprocess.CompletedProcess:
+    """Run a bash ``script`` inside ``distro``, delivering it on stdin.
+
+    The script is piped to ``bash`` via stdin rather than passed as a ``bash -c``
+    argument: subprocess.list2cmdline wraps an argument containing spaces in
+    double quotes and escapes inner quotes, but wsl.exe re-parses the command
+    line after ``--`` and corrupts that escaping (e.g. a ``"$dst"`` reference
+    arrives empty). Feeding the script on stdin sidesteps Windows command-line
+    quoting entirely, so embedded quotes survive verbatim.
     """
+    return subprocess.run(
+        ["wsl.exe", "-d", distro, "--", "bash"],
+        input=script.encode("utf-8"),
+        capture_output=True,
+    )
+
+
+def _parse_find_manifest(text: str) -> dict[str, tuple[str, int]]:
+    """Parse ``find -printf '%y\\t%s\\t%p\\n'`` output into a manifest dict."""
+    manifest: dict[str, tuple[str, int]] = {}
+    for line in text.splitlines():
+        parts = line.split("\t", 2)
+        if len(parts) != 3:
+            continue
+        ftype, size, path = parts
+        rel = path[2:] if path.startswith("./") else path
+        if ftype == "l":
+            manifest[rel] = ("l", 0)
+        elif ftype == "d":
+            manifest[rel] = ("d", 0)
+        else:
+            manifest[rel] = ("f", int(size) if size.lstrip("-").isdigit() else -1)
+    return manifest
+
+
+def _manifest_wsl(distro: str, linux_path: str) -> dict[str, tuple[str, int]]:
+    """Build the manifest natively inside ``distro`` via ``find``.
+
+    Enumeration runs in Linux because the \\\\wsl$ 9P redirector can
+    under-report directory contents when the tree is read from Windows.
+    """
+    result = _run_wsl_bash(distro, f"cd {shlex.quote(linux_path)} && {_WSL_FIND_PRINTF}")
+    return _parse_find_manifest(result.stdout.decode("utf-8", "replace"))
+
+
+def _compare_manifests(src: dict[str, tuple[str, int]],
+                       dst: dict[str, tuple[str, int]]) -> list[str]:
+    """Return discrepancies: source entries missing from or mismatched in the
+    target. Extra target entries are ignored — only loss of source data matters.
+    """
+    problems: list[str] = []
+    for rel, (kind, size) in sorted(src.items()):
+        if rel not in dst:
+            problems.append(f"missing in target: {rel}")
+            continue
+        dkind, dsize = dst[rel]
+        if dkind != kind:
+            problems.append(f"type mismatch ({kind} -> {dkind}): {rel}")
+        elif kind == "f" and size != dsize:
+            problems.append(f"size mismatch ({size} -> {dsize} bytes): {rel}")
+    return problems
+
+
+def _verify_or_raise(src: dict[str, tuple[str, int]],
+                     dst: dict[str, tuple[str, int]]) -> None:
+    """Raise RuntimeError (leaving the source intact) if the copy is incomplete."""
+    discrepancies = _compare_manifests(src, dst)
+    if discrepancies:
+        shown = "\n  ".join(discrepancies[:20])
+        more = f"\n  ... and {len(discrepancies) - 20} more" if len(discrepancies) > 20 else ""
+        raise RuntimeError(
+            "Copy verification failed — source left intact. "
+            f"{len(discrepancies)} discrepancy(ies):\n  {shown}{more}"
+        )
+
+
+def _delete_source(source: Path, distro: Optional[str] = None,
+                   src_linux: Optional[str] = None) -> bool:
+    """Delete the source after a *verified* copy. Never fatal.
+
+    A locked file (e.g. one still open in an editor or the Claude app) leaves
+    the source in place with a warning rather than discarding the verified
+    target. Returns True if the source was fully removed.
+    """
+    try:
+        if distro and src_linux:
+            r = _run_wsl_bash(distro, f"rm -rf {shlex.quote(src_linux)}")
+            if r.returncode != 0:
+                raise OSError(r.stderr.decode("utf-8", "replace").strip() or
+                              f"wsl rm exited {r.returncode}")
+        else:
+            shutil.rmtree(str(source), onerror=_remove_readonly)
+        return True
+    except OSError as exc:
+        logging.warning(
+            f"Copy verified, but the source could not be fully removed: {exc}\n"
+            f"The migration is complete; delete the leftover source manually: {source}"
+        )
+        return False
+
+
+def _move_directory_wsl(source: Path, target: Path, distro: str,
+                        src_linux: str, tgt_linux: str) -> None:
+    """Move a folder natively inside WSL via wsl.exe (cp -a + verify + delete).
+
+    Used whenever either endpoint is a WSL UNC path. ``cp -a`` preserves
+    symlinks and permissions and writes through the Linux VFS, avoiding the
+    silent data loss of robocopy over the \\\\wsl$ 9P redirector.
+
+    The copy and both verification manifests run in a *single* wsl.exe
+    invocation so they share one consistent filesystem view: separate wsl.exe
+    invocations can briefly observe stale drvfs metadata, which could otherwise
+    let an incomplete copy verify as complete and lose data on source deletion.
+    """
+    logging.info(f"WSL-native copy in distro '{distro}': {src_linux} -> {tgt_linux}")
+    marker = "===CLAUDE_MOVER_MANIFEST_SEP==="
+    script = (
+        "set -e; "
+        f"src={shlex.quote(src_linux)}; dst={shlex.quote(tgt_linux)}; "
+        'mkdir -p "$dst"; '
+        'cp -a "$src/." "$dst/"; '
+        f'( cd "$src" && {_WSL_FIND_PRINTF} ); '
+        f'echo "{marker}"; '
+        f'( cd "$dst" && {_WSL_FIND_PRINTF} )'
+    )
+    result = _run_wsl_bash(distro, script)
+    if result.returncode != 0:
+        err = result.stderr.decode("utf-8", "replace").strip()
+        raise RuntimeError(f"wsl cp failed (exit {result.returncode}):\n{err}")
+    # Verify every source entry reached the target before deleting the source.
+    src_text, _, dst_text = result.stdout.decode("utf-8", "replace").partition(marker)
+    _verify_or_raise(_parse_find_manifest(src_text), _parse_find_manifest(dst_text))
+    # Delete the source via WSL too: rm -rf handles both /mnt and Linux paths and,
+    # unlike shutil.rmtree, removes WSL symlinks on a Windows source cleanly.
+    _delete_source(source, distro=distro, src_linux=src_linux)
+
+
+def _move_directory(source: Path, target: Path) -> None:
+    """Move a directory tree, verifying the copy before deleting the source.
+
+    For any move touching WSL, copy natively via wsl.exe (_move_directory_wsl):
+    robocopy over the \\\\wsl$ 9P redirector silently drops files under load and
+    cannot replicate Linux symlinks, which previously caused data loss
+    (issue #26). Otherwise use robocopy, which uses the extended-length path API
+    internally so files at the 260-char MAX_PATH boundary copy correctly (where
+    shutil.move's CreateFileW would fail). In all cases the source is deleted
+    only after every source entry is confirmed present in the target, and source
+    deletion uses _remove_readonly to clear the read-only bit on files such as
+    .git/objects that shutil.rmtree cannot otherwise delete on Windows.
+    """
+    src_wsl = _wsl_endpoint(source)
+    tgt_wsl = _wsl_endpoint(target)
+    if src_wsl or tgt_wsl:
+        distro = (tgt_wsl or src_wsl)[0]
+        src_linux = _wsl_path_in_distro(source, distro)
+        tgt_linux = _wsl_path_in_distro(target, distro)
+        if src_linux and tgt_linux:
+            _move_directory_wsl(source, target, distro, src_linux, tgt_linux)
+            return
+        logging.warning(
+            "WSL endpoints span different distros (not cross-mounted); "
+            "falling back to robocopy with verification."
+        )
+
     result = subprocess.run(
         [
             "robocopy", str(source), str(target),
@@ -487,7 +733,9 @@ def _move_directory(source: Path, target: Path) -> None:
         raise RuntimeError(
             f"robocopy failed (exit {result.returncode}):\n{result.stdout.strip()}"
         )
-    shutil.rmtree(str(source), onerror=_remove_readonly)
+    # Verify the copy before deleting the source (prevents silent data loss).
+    _verify_or_raise(_manifest_windows(source), _manifest_windows(target))
+    _delete_source(source)
 
 
 def _rmtree_robust(path: Path) -> None:
