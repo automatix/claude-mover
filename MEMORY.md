@@ -218,3 +218,19 @@
 - **PR #24** gemergt (squash) → Issue #23 geschlossen.
 
 **Result:** Keine offenen PRs/Issues mehr. `claude_mover` erzeugt für WSL-Ziele jetzt automatisch den kanonischen App-Key, unabhängig von Alias/Schreibweise der Eingabe.
+
+## `2026-06-03` – Datenverlust bei WSL-Move behoben: copy→verify→delete + WSL-nativer cp (#26)
+
+**Request:** Bei SleepNote (Windows→WSL-Move) fehlten nach dem Move sehr viele Dateien — `.git` war leer, andere Verzeichnisse nur teilweise gefüllt. Untersuchen und im Tool fixen.
+
+**Done:**
+- **Ursache (aus Logs `17:02:36`):** `D:\…\SleepNote` (NTFS) → `\wsl$\Ubuntu\…` (9P). `robocopy` gab Exit `< 8` (= „Erfolg") zurück, das Tool löschte daraufhin die Quelle und entfernte das Backup — aber das Ziel war unvollständig. `robocopy` über das `\wsl$\`/`\wsl.localhost\` **9P-Redirector** ist grundsätzlich unzuverlässig: (1) verwirft Schreibvorgänge still unter Last (ACK ohne Persistenz → Exit `< 8`), (2) kann Linux-Symlinks nicht replizieren (empirisch reproduziert: Exit `9`, leeres `link_dir`). Es gab **keine Verifikation** vor dem Quell-Löschen.
+- **Fix (Branch `bugfix/wsl-move-data-loss`):**
+  1. **Verify-before-delete (alle Moves):** `_manifest_windows`/`_manifest_wsl` bauen `{relpath: (kind, size)}`; `_compare_manifests`/`_verify_or_raise` bestätigen, dass jeder Quell-Eintrag im Ziel liegt, bevor `_delete_source` läuft. Bei Diskrepanz → Abbruch, Quelle bleibt unangetastet.
+  2. **WSL-nativer Copy:** Bei WSL-Endpunkt kopiert `_move_directory_wsl` via `wsl.exe … cp -a` **innerhalb der Distro** (Symlinks/Rechte erhalten, 9P umgangen). Copy + **beide** Manifeste laufen in **einem** `wsl.exe`-Aufruf — getrennte Aufrufe sehen teils veraltete `drvfs`-Metadaten (würde sonst ein falsches „PASS" erlauben). Cross-Distro → Fallback robocopy+Verify.
+  3. **Bash über stdin:** `_run_wsl_bash` pipet das Skript an `wsl.exe … bash` per stdin — `subprocess.list2cmdline` + `wsl.exe`-Re-Parsing nach `--` zerstörte sonst das Quoting (`"$dst"` kam leer an).
+  4. **Quell-Löschung non-fatal:** Nach verifizierter Kopie führt eine gesperrte Datei nur zu Warnung + liegengelassener Quelle, nie zum Verwerfen des Ziels. WSL-Quellen via `rm -rf` (entfernt Linux-Symlinks sauber; `shutil.rmtree` wirft sonst `WinError 1920`).
+- **Empirisch verifiziert:** echter Windows→WSL-Move mit `.git`, read-only Objekten und Symlinks → Ziel strukturell identisch zur Quelle (`27/27` Einträge, Symlinks + read-only erhalten); Windows→Windows-Move (robocopy-Pfad) ebenfalls vollständig.
+- **Tests/Doku:** `195` Tests / `39` Klassen / `93%` (vorher `161`/`23`/`92%`); neue Klassen für WSL-Pfad-Übersetzung, Manifeste, Vergleich, `_delete_source`, `_move_directory_wsl`, Dispatch, WSL-Bash-Glue. `CLAUDE.md` (Architektur-Tabelle, Key-Design-Points) + `README.md` (WSL-Copy-Hinweis, „Copy verification"-Abschnitt) aktualisiert. Issue [#26](https://github.com/automatix/claude-mover/issues/26).
+
+**Result:** Stiller Datenverlust beim WSL-Move ist ausgeschlossen — keine Quell-Löschung ohne vollständige, verifizierte Kopie; WSL-Moves laufen jetzt nativ und zuverlässig. SleepNote-Projektdateien selbst waren bereits verloren (nur aus separater Sicherung wiederherstellbar); der Fix verhindert die Wiederholung.
