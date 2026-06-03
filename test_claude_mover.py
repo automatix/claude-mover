@@ -24,14 +24,23 @@ from claude_mover import (
     _canonicalize_wsl,
     _checkpoint_path,
     _clear_checkpoint,
+    _compare_manifests,
     _decode_dashed_naive,
     _decode_dashed_unc_naive,
+    _delete_source,
+    _drive_to_wsl_mount,
     _is_noncanonical_wsl_input,
+    _manifest_windows,
     _move_directory,
+    _move_directory_wsl,
+    _parse_find_manifest,
     _path_variants,
     _read_checkpoint,
     _remove_readonly,
     _rmtree_robust,
+    _verify_or_raise,
+    _wsl_endpoint,
+    _wsl_path_in_distro,
     _write_checkpoint,
     app_session_files,
     backup_context,
@@ -803,6 +812,288 @@ class TestMoveDirectory(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 _move_directory(src, tgt)
         mock_rmtree.assert_not_called()
+
+
+# ===========================================================================
+# WSL path translation
+# ===========================================================================
+
+class TestWslPathTranslation(unittest.TestCase):
+
+    def test_wsl_endpoint_localhost(self):
+        d, p = _wsl_endpoint(Path(r"\\wsl.localhost\Ubuntu\home\me\app"))
+        self.assertEqual(d, "Ubuntu")
+        self.assertEqual(p, "/home/me/app")
+
+    def test_wsl_endpoint_legacy_dollar_alias(self):
+        d, p = _wsl_endpoint(Path(r"\\wsl$\Debian\srv\x"))
+        self.assertEqual(d, "Debian")
+        self.assertEqual(p, "/srv/x")
+
+    def test_wsl_endpoint_distro_root(self):
+        d, p = _wsl_endpoint(Path(r"\\wsl.localhost\Ubuntu"))
+        self.assertEqual(d, "Ubuntu")
+        self.assertEqual(p, "/")
+
+    def test_wsl_endpoint_non_wsl_returns_none(self):
+        self.assertIsNone(_wsl_endpoint(Path(r"D:\workspace\app")))
+        self.assertIsNone(_wsl_endpoint(Path(r"\\fileserver\share\app")))
+
+    def test_drive_to_wsl_mount(self):
+        self.assertEqual(_drive_to_wsl_mount(Path(r"D:\workspace\app")),
+                         "/mnt/d/workspace/app")
+
+    def test_drive_to_wsl_mount_non_drive_returns_none(self):
+        self.assertIsNone(_drive_to_wsl_mount(Path(r"\\wsl.localhost\Ubuntu\x")))
+
+    def test_path_in_distro_same_distro_uses_linux_path(self):
+        tgt = Path(r"\\wsl.localhost\Ubuntu\home\me\app")
+        self.assertEqual(_wsl_path_in_distro(tgt, "Ubuntu"), "/home/me/app")
+
+    def test_path_in_distro_case_insensitive_distro(self):
+        tgt = Path(r"\\wsl.localhost\ubuntu\home\me\app")
+        self.assertEqual(_wsl_path_in_distro(tgt, "Ubuntu"), "/home/me/app")
+
+    def test_path_in_distro_drive_uses_mnt(self):
+        self.assertEqual(_wsl_path_in_distro(Path(r"D:\ws\a"), "Ubuntu"),
+                         "/mnt/d/ws/a")
+
+    def test_path_in_distro_other_distro_unreachable(self):
+        tgt = Path(r"\\wsl.localhost\Debian\home\me\app")
+        self.assertIsNone(_wsl_path_in_distro(tgt, "Ubuntu"))
+
+
+# ===========================================================================
+# Copy-verification manifests
+# ===========================================================================
+
+class TestParseFindManifest(unittest.TestCase):
+
+    def test_parses_file_dir_symlink(self):
+        text = "f\t12\t./README.md\nd\t4096\t./src\nl\t9\t./rl\n"
+        m = _parse_find_manifest(text)
+        self.assertEqual(m["README.md"], ("f", 12))
+        self.assertEqual(m["src"], ("d", 0))      # directory size ignored
+        self.assertEqual(m["rl"], ("l", 0))       # symlink size ignored
+
+    def test_strips_leading_dot_slash(self):
+        m = _parse_find_manifest("f\t1\t./a/b.txt\n")
+        self.assertIn("a/b.txt", m)
+
+    def test_ignores_malformed_lines(self):
+        m = _parse_find_manifest("garbage without tabs\nf\t5\t./ok\n")
+        self.assertEqual(set(m), {"ok"})
+
+    def test_non_numeric_size_becomes_minus_one(self):
+        m = _parse_find_manifest("f\tnan\t./weird\n")
+        self.assertEqual(m["weird"], ("f", -1))
+
+
+class TestManifestWindows(unittest.TestCase):
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_files_and_dirs_recorded(self):
+        _write(self.tmp / "a.txt", "hello")        # 5 bytes
+        _write(self.tmp / "sub" / "b.txt", "yo")   # 2 bytes
+        m = _manifest_windows(self.tmp)
+        self.assertEqual(m["a.txt"], ("f", 5))
+        self.assertEqual(m["sub"], ("d", 0))
+        self.assertEqual(m["sub/b.txt"], ("f", 2))
+
+    def test_missing_root_returns_empty(self):
+        self.assertEqual(_manifest_windows(self.tmp / "nope"), {})
+
+
+class TestCompareManifests(unittest.TestCase):
+
+    def test_identical_no_problems(self):
+        a = {"x": ("f", 3), "d": ("d", 0)}
+        self.assertEqual(_compare_manifests(a, dict(a)), [])
+
+    def test_missing_entry_reported(self):
+        problems = _compare_manifests({"x": ("f", 1)}, {})
+        self.assertEqual(len(problems), 1)
+        self.assertIn("missing in target: x", problems[0])
+
+    def test_size_mismatch_reported(self):
+        problems = _compare_manifests({"x": ("f", 10)}, {"x": ("f", 4)})
+        self.assertIn("size mismatch", problems[0])
+
+    def test_type_mismatch_reported(self):
+        problems = _compare_manifests({"x": ("f", 0)}, {"x": ("l", 0)})
+        self.assertIn("type mismatch", problems[0])
+
+    def test_extra_target_entries_ignored(self):
+        # Files present only in the target are not a problem (only loss matters).
+        self.assertEqual(_compare_manifests({"x": ("f", 1)},
+                                            {"x": ("f", 1), "extra": ("f", 9)}), [])
+
+
+class TestVerifyOrRaise(unittest.TestCase):
+
+    def test_passes_when_equal(self):
+        _verify_or_raise({"x": ("f", 1)}, {"x": ("f", 1)})  # no raise
+
+    def test_raises_on_discrepancy_with_source_intact_message(self):
+        with self.assertRaises(RuntimeError) as ctx:
+            _verify_or_raise({"x": ("f", 1)}, {})
+        self.assertIn("source left intact", str(ctx.exception))
+
+
+# ===========================================================================
+# _delete_source  — never fatal after a verified copy
+# ===========================================================================
+
+class TestDeleteSource(unittest.TestCase):
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_windows_source_uses_rmtree(self):
+        src = _make_dir(self.tmp, "src")
+        with patch("shutil.rmtree") as mock_rmtree:
+            ok = _delete_source(src)
+        self.assertTrue(ok)
+        mock_rmtree.assert_called_once_with(str(src), onerror=_remove_readonly)
+
+    def test_wsl_source_uses_wsl_rm(self):
+        src = Path(r"\\wsl.localhost\Ubuntu\home\me\app")
+        with patch("claude_mover._run_wsl_bash") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stderr=b"")
+            ok = _delete_source(src, distro="Ubuntu", src_linux="/home/me/app")
+        self.assertTrue(ok)
+        self.assertEqual(mock_run.call_args[0][0], "Ubuntu")
+        self.assertIn("rm -rf", mock_run.call_args[0][1])
+
+    def test_lock_is_non_fatal_and_warns(self):
+        src = _make_dir(self.tmp, "src")
+        with patch("shutil.rmtree", side_effect=OSError("locked")), \
+             self.assertLogs(level="WARNING") as logs:
+            ok = _delete_source(src)
+        self.assertFalse(ok)
+        self.assertTrue(any("could not be fully removed" in m for m in logs.output))
+
+    def test_wsl_rm_failure_is_non_fatal_and_warns(self):
+        src = Path(r"\\wsl.localhost\Ubuntu\home\me\app")
+        run = MagicMock(returncode=1, stderr=b"rm: cannot remove")
+        with patch("claude_mover._run_wsl_bash", return_value=run), \
+             self.assertLogs(level="WARNING") as logs:
+            ok = _delete_source(src, distro="Ubuntu", src_linux="/home/me/app")
+        self.assertFalse(ok)
+        self.assertTrue(any("could not be fully removed" in m for m in logs.output))
+
+
+# ===========================================================================
+# WSL bash glue: _run_wsl_bash / _manifest_wsl
+# ===========================================================================
+
+class TestWslBashGlue(unittest.TestCase):
+
+    def test_run_wsl_bash_pipes_script_on_stdin(self):
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            claude_mover._run_wsl_bash("Ubuntu", "echo hi")
+        argv = mock_run.call_args[0][0]
+        self.assertEqual(argv, ["wsl.exe", "-d", "Ubuntu", "--", "bash"])
+        # Script is delivered on stdin (not as a bash -c argument).
+        self.assertEqual(mock_run.call_args[1]["input"], b"echo hi")
+
+    def test_manifest_wsl_parses_runner_output(self):
+        run = MagicMock(stdout=b"f\t7\t./a.txt\nd\t4096\t./d\n")
+        with patch("claude_mover._run_wsl_bash", return_value=run):
+            m = claude_mover._manifest_wsl("Ubuntu", "/home/me/app")
+        self.assertEqual(m["a.txt"], ("f", 7))
+        self.assertEqual(m["d"], ("d", 0))
+
+
+# ===========================================================================
+# _move_directory_wsl  — _run_wsl_bash mocked
+# ===========================================================================
+
+class TestMoveDirectoryWsl(unittest.TestCase):
+
+    SRC = Path(r"D:\ws\app")
+    TGT = Path(r"\\wsl.localhost\Ubuntu\home\me\app")
+
+    def _stdout(self, src_lines, dst_lines):
+        marker = "===CLAUDE_MOVER_MANIFEST_SEP==="
+        return (src_lines + "\n" + marker + "\n" + dst_lines).encode("utf-8")
+
+    def test_verified_copy_deletes_source(self):
+        same = "f\t5\t./a.txt"
+        run = MagicMock(returncode=0, stdout=self._stdout(same, same), stderr=b"")
+        with patch("claude_mover._run_wsl_bash", return_value=run), \
+             patch("claude_mover._delete_source") as mock_del:
+            _move_directory_wsl(self.SRC, self.TGT, "Ubuntu",
+                                "/mnt/d/ws/app", "/home/me/app")
+        mock_del.assert_called_once()
+
+    def test_incomplete_copy_raises_and_keeps_source(self):
+        run = MagicMock(returncode=0,
+                        stdout=self._stdout("f\t5\t./a.txt", ""), stderr=b"")
+        with patch("claude_mover._run_wsl_bash", return_value=run), \
+             patch("claude_mover._delete_source") as mock_del:
+            with self.assertRaises(RuntimeError) as ctx:
+                _move_directory_wsl(self.SRC, self.TGT, "Ubuntu",
+                                    "/mnt/d/ws/app", "/home/me/app")
+        self.assertIn("source left intact", str(ctx.exception))
+        mock_del.assert_not_called()
+
+    def test_cp_failure_raises_and_keeps_source(self):
+        run = MagicMock(returncode=1, stdout=b"", stderr=b"cp: error")
+        with patch("claude_mover._run_wsl_bash", return_value=run), \
+             patch("claude_mover._delete_source") as mock_del:
+            with self.assertRaises(RuntimeError) as ctx:
+                _move_directory_wsl(self.SRC, self.TGT, "Ubuntu",
+                                    "/mnt/d/ws/app", "/home/me/app")
+        self.assertIn("wsl cp failed", str(ctx.exception))
+        mock_del.assert_not_called()
+
+
+# ===========================================================================
+# _move_directory  — WSL dispatch
+# ===========================================================================
+
+class TestMoveDirectoryDispatch(unittest.TestCase):
+
+    def test_wsl_target_routes_to_wsl_mover(self):
+        src = Path(r"D:\ws\app")
+        tgt = Path(r"\\wsl.localhost\Ubuntu\home\me\app")
+        with patch("claude_mover._move_directory_wsl") as mock_wsl, \
+             patch("subprocess.run") as mock_run:
+            _move_directory(src, tgt)
+        mock_wsl.assert_called_once()
+        # The native WSL path must NOT fall through to robocopy.
+        mock_run.assert_not_called()
+        args = mock_wsl.call_args[0]
+        self.assertEqual(args[2], "Ubuntu")           # distro
+        self.assertEqual(args[3], "/mnt/d/ws/app")    # source as seen in WSL
+        self.assertEqual(args[4], "/home/me/app")     # target as seen in WSL
+
+    def test_cross_distro_falls_back_to_robocopy(self):
+        # Source in Debian, target in Ubuntu: not cross-mounted, so the native
+        # path is unreachable and robocopy must be used (with verification).
+        src = Path(r"\\wsl.localhost\Debian\home\me\app")
+        tgt = Path(r"\\wsl.localhost\Ubuntu\home\me\app")
+        result = MagicMock(returncode=1)
+        with patch("claude_mover._move_directory_wsl") as mock_wsl, \
+             patch("subprocess.run", return_value=result) as mock_run, \
+             patch("claude_mover._verify_or_raise"), \
+             patch("claude_mover._delete_source"):
+            _move_directory(src, tgt)
+        mock_wsl.assert_not_called()
+        mock_run.assert_called_once()
+        self.assertEqual(mock_run.call_args[0][0][0], "robocopy")
 
 
 # ===========================================================================

@@ -120,6 +120,8 @@ python claude_mover.py D:\workspace\tools\SleepNote '\\wsl$\Ubuntu\home\automati
 
 You can give the target with either WSL alias (`\\wsl$\Ubuntu\…` or `\\wsl.localhost\ubuntu\…`) — they point to the same location. Claude Mover automatically normalizes WSL targets to the form the Claude desktop app uses itself (`\\wsl.localhost\<distro-lowercased>\…`), so the session history always lands under the key the app reads. It logs a notice when it rewrites the form. The `\\wsl.localhost` form contains no `$`, so it needs no quoting in any shell.
 
+> **How the folder is copied to/from WSL.** For moves that touch WSL, Claude Mover copies the folder **natively inside the distro** (`wsl.exe … cp -a`) rather than across the `\\wsl$\` network redirector. The redirector silently drops files under load and cannot reproduce Linux symlinks, which could corrupt or lose data on a large project (e.g. one with a `.git` or `node_modules` folder). The native copy preserves symlinks and permissions, and the move is **verified** before the original is removed (see below).
+
 ---
 
 ### Move a project from WSL back to Windows
@@ -159,6 +161,10 @@ Close the desktop app (including the tray icon) and exit all Claude Code CLI and
 
 ---
 
+## Copy verification (no silent data loss)
+
+The folder move always **copies first, verifies, and only then deletes the original**. After copying, Claude Mover builds a manifest of both trees — every file, directory, and symlink, with file sizes — and confirms that every source entry is present in the target. If anything is missing or mismatched, it aborts and **leaves the source untouched** rather than deleting an incomplete copy. Once the copy is verified, a source file that is still locked (e.g. open in an editor) is reported as a warning and left in place, never at the cost of the verified target.
+
 ## Rollback
 
 If anything goes wrong during migration, Claude Mover automatically:
@@ -196,7 +202,7 @@ pip install pytest-cov
 python -m pytest test_claude_mover.py --cov=claude_mover --cov-report=term-missing
 ```
 
-The test suite contains `144` tests across `21` test classes with `92%` line coverage.
+The test suite contains `195` tests across `39` test classes with `93%` line coverage.
 
 ## Logs
 

@@ -9,3 +9,4 @@ build/
 Thumbs.db
 .coverage
 .claude/settings.local.json
+local/
