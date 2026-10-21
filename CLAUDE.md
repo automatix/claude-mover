@@ -14,7 +14,7 @@ The correct migration order is:
 4. Update any absolute paths in `.claude/settings.json` and `.mcp.json`.
 5. Update path entries in `~/.claude/history.jsonl`.
 6. Update `~/.claude.json` (global app config — project list and GitHub repo map; this is what the Claude desktop app reads to display the "open project" path).
-7. Update `cwd`/`originCwd` in the Claude **desktop app** session store (`%LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming\Claude\claude-code-sessions\**\local_*.json`). This store is separate from `~/.claude/` and is what drives the app's trust dialog, "Show in Explorer", and "Copy path".
+7. Update `cwd`/`originCwd` in the Claude **desktop app** session store (`%LOCALAPPDATA%\Claude-Data\claude_*\claude-code-sessions\**\local_*.json`; legacy fallback `%LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming\Claude\claude-code-sessions\**\local_*.json`). This store is separate from `~/.claude/` and is what drives the app's trust dialog, "Show in Explorer", and "Copy path".
 
 ## Requirements
 
@@ -124,7 +124,7 @@ Examples:
 - Path encoding: every non-alphanumeric character → `-`, case preserved (see the [Path encoding](#path-encoding-drive-letter-and-unc--wsl) section). E.g. `D:\workspace\myapp` → `D--workspace-myapp`.
 - `~/.claude/history.jsonl` — global history index; contains absolute path references that must be rewritten on move.
 - `~/.claude.json` (in the **home directory**, NOT inside `~/.claude/`) — global app config read by the Claude desktop app; stores project settings keyed by path (both backslash and forward-slash forms) and the GitHub repo → local path map. The `backups/` folder inside `~/.claude/` contains timestamped backups of this file made before each write.
-- `%LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming\Claude\claude-code-sessions\<account>\<group>\local_<id>.json` — the Claude **desktop app** (MSIX) per-session store, **separate from `~/.claude/`**. Each file holds `cwd` and `originCwd`. These are what actually drive the app's "Trust this workspace?" dialog, "Show in Explorer", and "Copy path" (see `logs\main.log`: `LocalSessions.checkTrust: cwd=...`). They survive a folder move and must be patched, or the app keeps showing the old path even after `~/.claude.json` is fixed.
+- `%LOCALAPPDATA%\Claude-Data\claude_<pkg>\claude-code-sessions\<account>\<group>\local_<id>.json` — the Claude **desktop app** (MSIX) per-session store (issue `#28`: app data moved here from the package-virtualized `%LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming\Claude\`, which now only holds a `.user-data-left.*` marker; the legacy path is still searched as a fallback, and a warning is logged when neither exists), **separate from `~/.claude/`**. Each file holds `cwd` and `originCwd`. These are what actually drive the app's "Trust this workspace?" dialog, "Show in Explorer", and "Copy path" (see `logs\main.log`: `LocalSessions.checkTrust: cwd=...`). They survive a folder move and must be patched, or the app keeps showing the old path even after `~/.claude.json` is fixed.
 - `.claude/` folder and `CLAUDE.md` inside the project folder travel with the folder automatically — no special handling needed.
 - `.mcp.json` may contain absolute paths and must be patched if present.
 - WSL projects accessed from Windows via `\\wsl.localhost\...` stay in the Windows `%USERPROFILE%\.claude\` store — no cross-store migration needed. There is no `claude` CLI (and no `~/.claude`) inside the distro; the desktop app runs the CLI on the Windows side with the UNC `cwd`.
@@ -138,7 +138,7 @@ Run the test suite with:
 python -m pytest test_claude_mover.py
 ```
 
-`test_claude_mover.py` contains `195` tests across `39` test classes with `93%` line coverage. Coverage is measured via `pytest-cov` (`pip install pytest-cov`).
+`test_claude_mover.py` contains `198` tests across `39` test classes with `93%` line coverage. Coverage is measured via `pytest-cov` (`pip install pytest-cov`).
 
 The uncovered lines (`ensure_parent` interactive prompt, `if __name__ == "__main__"`) require interactive `input()` mocking or direct script execution and are intentionally left for manual verification via `--dry-run`.
 

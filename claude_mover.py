@@ -27,7 +27,12 @@ CHECKPOINT_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / APP_NA
 # Per-session metadata store of the Claude desktop app (MSIX package). Each
 # local_<id>.json holds cwd/originCwd, which survive a folder move and otherwise
 # keep pointing at the old path (driving the trust dialog and "Copy path").
-APP_PACKAGES_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Packages"
+# Current app versions keep their user data in %LOCALAPPDATA%\Claude-Data\
+# claude_<pkg>\; older versions used the package-virtualized Roaming folder,
+# which is still searched as a fallback (issue #28).
+APP_DATA_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Claude-Data"
+APP_DATA_SESSION_GLOB = "claude_*/claude-code-sessions/**/local_*.json"
+APP_PACKAGES_DIR =Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Packages"
 APP_SESSION_GLOB = "Claude_*/LocalCache/Roaming/Claude/claude-code-sessions/**/local_*.json"
 
 
@@ -478,14 +483,21 @@ def app_session_files() -> list[Path]:
     """Return every Claude desktop app per-session metadata file.
 
     The MSIX desktop app keeps its own session store, separate from ~/.claude/:
-        %LOCALAPPDATA%\\Packages\\Claude_*\\LocalCache\\Roaming\\Claude\\
+        %LOCALAPPDATA%\\Claude-Data\\claude_<pkg>\\
             claude-code-sessions\\<account>\\<group>\\local_<id>.json
-    Each file holds cwd/originCwd, which survive a folder move and otherwise
-    keep pointing at the old path. Returns an empty list when no store exists.
+    Older app versions used the legacy location
+        %LOCALAPPDATA%\\Packages\\Claude_*\\LocalCache\\Roaming\\Claude\\
+            claude-code-sessions\\...
+    Both are searched. Each file holds cwd/originCwd, which survive a folder
+    move and otherwise keep pointing at the old path. Returns an empty list
+    when no store exists.
     """
-    if not APP_PACKAGES_DIR.exists():
-        return []
-    return sorted(APP_PACKAGES_DIR.glob(APP_SESSION_GLOB))
+    found: set[Path] = set()
+    for base, pattern in ((APP_DATA_DIR, APP_DATA_SESSION_GLOB),
+                          (APP_PACKAGES_DIR, APP_SESSION_GLOB)):
+        if base.exists():
+            found.update(base.glob(pattern))
+    return sorted(found)
 
 
 # ---------------------------------------------------------------------------
@@ -881,7 +893,13 @@ def migrate(source: Path, target: Path, dry_run: bool) -> dict:
         # This store lives outside ~/.claude/ and is what drives the app's
         # trust dialog, "Show in Explorer", and "Copy path".
         app_files = app_session_files()
-        if app_files:
+        if not app_files:
+            logging.warning(
+                "No Claude desktop app session store found (checked "
+                f"{APP_DATA_DIR} and {APP_PACKAGES_DIR}). If you use the "
+                "desktop app, it may keep showing the old path."
+            )
+        else:
             logging.info(f"Patching {len(app_files)} desktop app session file(s) ...")
             for sf in app_files:
                 changed = patch_file(sf, source, target, dry_run)

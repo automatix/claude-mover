@@ -55,6 +55,23 @@ from claude_mover import (
     validate_target,
 )
 
+# Keep every test away from the real desktop app store of the machine running
+# the suite; tests that exercise it patch these to a temporary directory.
+_MODULE_PATCHES = [
+    patch.object(claude_mover, "APP_DATA_DIR", Path(r"Z:\nonexistent\Claude-Data")),
+    patch.object(claude_mover, "APP_PACKAGES_DIR", Path(r"Z:\nonexistent\Packages")),
+]
+
+
+def setUpModule():
+    for p in _MODULE_PATCHES:
+        p.start()
+
+
+def tearDownModule():
+    for p in _MODULE_PATCHES:
+        p.stop()
+
 
 # ===========================================================================
 # Helpers
@@ -432,8 +449,32 @@ class TestAppSessionFiles(unittest.TestCase):
         self._tmp.cleanup()
 
     def test_returns_empty_when_packages_dir_missing(self):
-        with patch.object(claude_mover, "APP_PACKAGES_DIR", self.tmp / "nope"):
+        with patch.object(claude_mover, "APP_PACKAGES_DIR", self.tmp / "nope"), \
+             patch.object(claude_mover, "APP_DATA_DIR", self.tmp / "nope2"):
             self.assertEqual(app_session_files(), [])
+
+    def test_discovers_files_in_current_claude_data_location(self):
+        """Issue #28: current app versions store sessions under Claude-Data."""
+        data = self.tmp / "Claude-Data"
+        new_dir = _make_dir(data, "claude_pzs8sxrjxfjjc", "claude-code-sessions",
+                            "acct-uuid", "group-uuid")
+        _write(new_dir / "local_new.json", "{}")
+        _write(self.session_dir / "local_old.json", "{}")
+        # The marker the app leaves behind in the legacy folder is ignored.
+        _write(data / "claude_pzs8sxrjxfjjc" / "other.json", "{}")
+        with patch.object(claude_mover, "APP_DATA_DIR", data), \
+             patch.object(claude_mover, "APP_PACKAGES_DIR", self.packages):
+            found = app_session_files()
+        self.assertEqual(sorted(p.name for p in found),
+                         ["local_new.json", "local_old.json"])
+
+    def test_only_claude_data_location_present(self):
+        data = self.tmp / "Claude-Data"
+        new_dir = _make_dir(data, "claude_x", "claude-code-sessions", "a", "g")
+        _write(new_dir / "local_1.json", "{}")
+        with patch.object(claude_mover, "APP_DATA_DIR", data), \
+             patch.object(claude_mover, "APP_PACKAGES_DIR", self.tmp / "nope"):
+            self.assertEqual([p.name for p in app_session_files()], ["local_1.json"])
 
     def test_discovers_local_session_json_files(self):
         f1 = self.session_dir / "local_aaa.json"
@@ -1676,6 +1717,22 @@ class TestMigrateAdditional(unittest.TestCase):
 
         self.assertIsNotNone(cp)
         self.assertTrue(cp["failed"])
+
+    def test_warns_when_no_desktop_app_store_found(self):
+        """Issue #28: a missing app store is reported, not silently skipped."""
+        source, target, projects_dir, ctx_src, checkpoint_dir = self._setup()
+        _write(ctx_src / "session.jsonl", "nothing\n")
+
+        with patch.object(claude_mover, "PROJECTS_DIR", projects_dir), \
+             patch.object(claude_mover, "CHECKPOINT_DIR", checkpoint_dir), \
+             patch.object(claude_mover, "HISTORY_FILE", self.base / "h.jsonl"), \
+             patch.object(claude_mover, "CLAUDE_JSON", self.base / ".claude.json"), \
+             patch("claude_mover._move_directory"), \
+             patch("claude_mover.logging.warning") as mock_warn:
+            claude_mover.migrate(source, target, dry_run=False)
+
+        warned = " ".join(str(c) for c in mock_warn.call_args_list)
+        self.assertIn("No Claude desktop app session store found", warned)
 
     def _patch_checkpoint_dir(self, checkpoint_dir):
         return patch.object(claude_mover, "CHECKPOINT_DIR", checkpoint_dir)
