@@ -59,7 +59,7 @@ The file is organized into clearly delimited sections:
 | **Configuration** | `_config_paths` — resolves `CLAUDE_DIR` / `CLAUDE_JSON`, honouring `CLAUDE_CONFIG_DIR` (issue `#31`); `main` refuses `CLAUDE_CODE_PROJECT_DIR_NAME` |
 | **Logging** | File + stdout logging setup; dry-run prefix |
 | **Path utilities** | `encode_path` (absolute path → dashed key), `_path_hash` (hash suffix for keys over `200` chars), `normalize_path` (accepts all path formats), `_canonicalize_wsl` (WSL UNC → canonical `wsl.localhost` form), `_is_noncanonical_wsl_input`, `_decode_dashed_naive`, `_decode_dashed_unc_naive`, `_UNC_DASHED_SERVERS` |
-| **Path variant helpers** | `_path_variants` returns the `5` string representations of a path that may appear in files; `patch_content` replaces all of them in a string |
+| **Path variant helpers** | `_path_variants` returns the `5` string representations of a path that may appear in files; `patch_content` replaces all of them in a string, only where the path ends (`_PATH_END`, issue `#40`) |
 | **Validation** | `validate_source` / `validate_target` — existence checks with actionable error messages |
 | **Parent directory** | `ensure_parent` — interactive prompt when the target parent is missing |
 | **Backup** | `backup_context` / `restore_backup` / `remove_backup` — safety net around the context rename |
@@ -80,6 +80,7 @@ The file is organized into clearly delimited sections:
   - Drive-letter paths: `D:\p`, `D:/p`, `/d/p`, `/D/p`, `D--p`, `D:\\p` (JSON-encoded)
   - UNC paths: `\\server\share\p`, `//server/share/p` (×3, no Git Bash equivalent), `--server-share-p`, `\\\\server\\share\\p` (JSON-encoded)
   - The JSON-encoded 6th variant is what `history.jsonl` uses for its `"project"` field (each backslash doubled).
+- **Path boundary (issue `#40`):** `patch_content` replaces a variant only where the path ends — followed by a separator, a quote, the end of the text, or a sentence-ending `.` — never where a folder name continues. A sibling such as `...\zerobox2`, `...\zerobox-old`, `...\zerobox.bak` or `...\Claude Mover 2` (and the dashed `...-zerobox-old`) stays untouched; paths below the moved folder are still rewritten. Trade-off: a prose mention followed by a space and a word is left as is.
 - The Claude context directory is renamed **before** session files are patched; if patching targets the renamed directory, `dry_run` mode reads from the original to avoid mutating state.
 - Backup is created before any write and removed only on full success. On any exception, `restore_backup` puts the context directory back so the source project remains intact.
 - **Copy-then-verify-then-delete (issue `#26`):** the folder move never deletes the source until every source entry is confirmed present in the target. `_move_directory` copies, builds a manifest of both trees (relative path + kind + file size), and only deletes the source when `_compare_manifests` finds no missing or mismatched entries; otherwise it raises with the source left intact. This closes a data-loss bug where a copy reported success but was silently incomplete.
@@ -149,7 +150,7 @@ Run the test suite with:
 python -m pytest test_claude_mover.py
 ```
 
-`test_claude_mover.py` contains `213` tests across `41` test classes with `93%` line coverage. Coverage is measured via `pytest-cov` (`pip install pytest-cov`).
+`test_claude_mover.py` contains `218` tests across `42` test classes with `93%` line coverage. Coverage is measured via `pytest-cov` (`pip install pytest-cov`).
 
 The uncovered lines (`ensure_parent` interactive prompt, `if __name__ == "__main__"`) require interactive `input()` mocking or direct script execution and are intentionally left for manual verification via `--dry-run`.
 
