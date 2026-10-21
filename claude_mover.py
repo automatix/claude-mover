@@ -1021,12 +1021,9 @@ def _clear_checkpoint(source: Path) -> None:
 # Migration
 # ---------------------------------------------------------------------------
 
-def migrate(source: Path, target: Path, dry_run: bool) -> dict:
-    """Execute the full migration. Returns a summary dict."""
-    source = source.resolve()
-    target = target.resolve()
-
-    summary = {
+def _new_summary(source: Path, target: Path, mode: str) -> dict:
+    return {
+        "mode": mode,
         "source": str(source),
         "target": str(target),
         "sessions_migrated": 0,
@@ -1034,6 +1031,144 @@ def migrate(source: Path, target: Path, dry_run: bool) -> dict:
         "history_lines_patched": 0,
         "app_sessions_patched": 0,
     }
+
+
+def _patch_sessions(ctx: Path, source: Path, target: Path, dry_run: bool,
+                    summary: dict) -> None:
+    """Patch every transcript in a context directory, including the subagent
+    transcripts nested under <session>/subagents/ (issue #29)."""
+    jsonl_files = session_files(ctx)
+    logging.info(f"Patching {len(jsonl_files)} session file(s) ...")
+    for jf in jsonl_files:
+        changed = patch_jsonl(jf, source, target, dry_run)
+        summary["sessions_migrated"] += 1
+        if changed:
+            logging.info(f"  {jf.relative_to(ctx)}: {changed} line(s) updated")
+
+
+def _patch_references(source: Path, target: Path, dry_run: bool, summary: dict) -> None:
+    """Rewrite every path reference outside the context directory.
+
+    Shared by migrate (after the folder move) and repatch (issue #53).
+    """
+    # Config files inside the moved project
+    for cf in (target / ".claude" / "settings.json",
+               target / ".claude" / "settings.local.json",
+               target / ".mcp.json"):
+        if cf.exists() and patch_file(cf, source, target, dry_run):
+            summary["config_files_patched"].append(str(cf))
+            logging.info(f"Patched: {cf}")
+
+    # history.jsonl
+    if HISTORY_FILE.exists():
+        changed = patch_jsonl(HISTORY_FILE, source, target, dry_run)
+        summary["history_lines_patched"] = changed
+        if changed:
+            logging.info(f"history.jsonl: {changed} line(s) updated")
+
+    # ~/.claude.json (global app config: project list + GitHub repo map)
+    if CLAUDE_JSON.exists() and patch_file(CLAUDE_JSON, source, target, dry_run):
+        summary["config_files_patched"].append(str(CLAUDE_JSON))
+        logging.info(f"Patched: {CLAUDE_JSON}")
+
+    # The Claude desktop app session store (cwd/originCwd). It lives outside
+    # ~/.claude/ and drives the app's trust dialog, "Show in Explorer" and
+    # "Copy path".
+    app_files = app_session_files()
+    if not app_files:
+        logging.warning(
+            "No Claude desktop app session store found (checked "
+            f"{APP_DATA_DIR} and {APP_PACKAGES_DIR}). If you use the "
+            "desktop app, it may keep showing the old path."
+        )
+    else:
+        logging.info(f"Patching {len(app_files)} desktop app session file(s) ...")
+        for sf in app_files:
+            if patch_file(sf, source, target, dry_run):
+                summary["app_sessions_patched"] += 1
+                summary["config_files_patched"].append(str(sf))
+                logging.info(f"  {sf.name}: cwd/originCwd updated")
+
+    # Further path-keyed desktop app files: presets, recent folders, Cowork.
+    for cf in app_config_files():
+        if patch_file(cf, source, target, dry_run):
+            summary["config_files_patched"].append(str(cf))
+            logging.info(f"Patched: {cf}")
+
+
+def _is_duplicate_context(dup: Path, original: Path) -> bool:
+    """True if every file below dup exists below original with identical bytes."""
+    files = [p for p in dup.rglob("*") if p.is_file()]
+    if not files:
+        return True
+    for p in files:
+        twin = original / p.relative_to(dup)
+        if not twin.is_file() or twin.stat().st_size != p.stat().st_size \
+                or twin.read_bytes() != p.read_bytes():
+            return False
+    return True
+
+
+def repatch(source: Path, target: Path, dry_run: bool) -> dict:
+    """Rewrite the path references of a folder that is already at target.
+
+    For a move whose references were reverted afterwards (e.g. by a running
+    desktop app, issue #51) or that was done by hand. The folder is never
+    touched; the context directory is renamed if it still has the old key.
+    """
+    source = source.resolve()
+    target = target.resolve()
+    summary = _new_summary(source, target, "Repatch")
+
+    if not target.is_dir():
+        logging.error(f"--repatch needs the moved folder at the new location: {target} does not exist.")
+        sys.exit(1)
+    if source.exists():
+        logging.error(f"The folder still exists at the old location: {source}. "
+                      "Run a normal move instead of --repatch.")
+        sys.exit(1)
+
+    old_ctx = PROJECTS_DIR / encode_path(source)
+    new_ctx = PROJECTS_DIR / encode_path(target)
+    logging.info(f"Old location: {source}")
+    logging.info(f"New location: {target}")
+    if old_ctx.exists() and new_ctx.exists():
+        # Observed: a desktop app left running during the move copied a
+        # session it still had open back under the old key. A pure duplicate
+        # is dropped (Claude Code reports a session ID held by two projects
+        # as not found); anything else needs a human decision.
+        if not _is_duplicate_context(old_ctx, new_ctx):
+            logging.error(f"Session directories exist under both keys ({old_ctx.name}, "
+                          f"{new_ctx.name}) with different content; merge them by hand first.")
+            sys.exit(1)
+        if dry_run:
+            logging.info(f"[DRY RUN] Would remove duplicate session directory: {old_ctx}")
+        else:
+            shutil.rmtree(str(old_ctx), onerror=_remove_readonly)
+            logging.info(f"Removed duplicate session directory (identical copy): {old_ctx}")
+    ctx = new_ctx
+    if old_ctx.exists() and not new_ctx.exists():
+        if dry_run:
+            logging.info(f"[DRY RUN] Would rename: {old_ctx} -> {new_ctx}")
+            ctx = old_ctx
+        else:
+            logging.info(f"Renaming context directory: {old_ctx.name} -> {new_ctx.name}")
+            old_ctx.rename(new_ctx)
+
+    if ctx.exists():
+        _patch_sessions(ctx, source, target, dry_run, summary)
+    else:
+        logging.warning(f"No session directory found under {old_ctx.name} or {new_ctx.name}.")
+    _patch_references(source, target, dry_run, summary)
+    return summary
+
+
+def migrate(source: Path, target: Path, dry_run: bool) -> dict:
+    """Execute the full migration. Returns a summary dict."""
+    source = source.resolve()
+    target = target.resolve()
+
+    summary = _new_summary(source, target, "Migration")
 
     # --- Validate ---
     source_ctx = validate_source(source)
@@ -1061,17 +1196,9 @@ def migrate(source: Path, target: Path, dry_run: bool) -> dict:
         else:
             logging.info(f"[DRY RUN] Would rename: {source_ctx} -> {target_ctx}")
 
-        # Step 2: Patch path references in session files, including the
-        # subagent transcripts nested under <session>/subagents/ (issue #29).
+        # Step 2: Patch path references in session files
         ctx_for_sessions = target_ctx if not dry_run else source_ctx
-        jsonl_files = session_files(ctx_for_sessions)
-        logging.info(f"Patching {len(jsonl_files)} session file(s) ...")
-        for jf in jsonl_files:
-            changed = patch_jsonl(jf, source, target, dry_run)
-            summary["sessions_migrated"] += 1
-            if changed:
-                rel = jf.relative_to(ctx_for_sessions)
-                logging.info(f"  {rel}: {changed} line(s) updated")
+        _patch_sessions(ctx_for_sessions, source, target, dry_run, summary)
 
         # Step 3: Move project folder
         logging.info(f"Moving project folder ...")
@@ -1080,57 +1207,8 @@ def migrate(source: Path, target: Path, dry_run: bool) -> dict:
         else:
             logging.info(f"[DRY RUN] Would move: {source} -> {target}")
 
-        # Step 4: Patch config files inside moved project
-        config_candidates = [
-            target / ".claude" / "settings.json",
-            target / ".claude" / "settings.local.json",
-            target / ".mcp.json",
-        ]
-        for cf in config_candidates:
-            if cf.exists():
-                changed = patch_file(cf, source, target, dry_run)
-                if changed:
-                    summary["config_files_patched"].append(str(cf))
-                    logging.info(f"Patched: {cf}")
-
-        # Step 5: Patch history.jsonl
-        if HISTORY_FILE.exists():
-            changed = patch_jsonl(HISTORY_FILE, source, target, dry_run)
-            summary["history_lines_patched"] = changed
-            if changed:
-                logging.info(f"history.jsonl: {changed} line(s) updated")
-
-        # Step 6: Patch ~/.claude.json (global app config: project list + GitHub repo map)
-        if CLAUDE_JSON.exists():
-            changed = patch_file(CLAUDE_JSON, source, target, dry_run)
-            if changed:
-                summary["config_files_patched"].append(str(CLAUDE_JSON))
-                logging.info(f"Patched: {CLAUDE_JSON}")
-
-        # Step 7: Patch the Claude desktop app session store (cwd/originCwd).
-        # This store lives outside ~/.claude/ and is what drives the app's
-        # trust dialog, "Show in Explorer", and "Copy path".
-        app_files = app_session_files()
-        if not app_files:
-            logging.warning(
-                "No Claude desktop app session store found (checked "
-                f"{APP_DATA_DIR} and {APP_PACKAGES_DIR}). If you use the "
-                "desktop app, it may keep showing the old path."
-            )
-        else:
-            logging.info(f"Patching {len(app_files)} desktop app session file(s) ...")
-            for sf in app_files:
-                changed = patch_file(sf, source, target, dry_run)
-                if changed:
-                    summary["app_sessions_patched"] += 1
-                    summary["config_files_patched"].append(str(sf))
-                    logging.info(f"  {sf.name}: cwd/originCwd updated")
-
-        # Further path-keyed desktop app files: session presets, recent folders.
-        for cf in app_config_files():
-            if patch_file(cf, source, target, dry_run):
-                summary["config_files_patched"].append(str(cf))
-                logging.info(f"Patched: {cf}")
+        # Steps 4-7: project config, history, global config, desktop app
+        _patch_references(source, target, dry_run, summary)
 
         # Step 8: Remove backup
         remove_backup(backup, dry_run)
@@ -1164,7 +1242,7 @@ def migrate(source: Path, target: Path, dry_run: bool) -> dict:
 def print_summary(summary: dict, log_file: Path, dry_run: bool) -> None:
     prefix = "[DRY RUN] " if dry_run else ""
     print("\n" + "=" * 60)
-    print(f"{prefix}Migration {'preview' if dry_run else 'complete'}.")
+    print(f"{prefix}{summary.get('mode', 'Migration')} {'preview' if dry_run else 'complete'}.")
     print(f"  Source:                {summary['source']}")
     print(f"  Target:                {summary['target']}")
     print(f"  Sessions migrated:     {summary['sessions_migrated']}")
@@ -1205,7 +1283,15 @@ def main() -> None:
         action="store_true",
         help="Clean up leftover artifacts from a previous failed migration, then retry",
     )
+    parser.add_argument(
+        "--repatch",
+        action="store_true",
+        help="The folder is already at <target>: only rewrite the path references "
+             "(e.g. after the desktop app reverted them)",
+    )
     args = parser.parse_args()
+    if args.repatch and args.resume:
+        parser.error("--repatch and --resume cannot be combined")
 
     log_file = setup_logging(args.dry_run)
 
@@ -1262,7 +1348,8 @@ def main() -> None:
             logging.info("[RESUME] Nothing to clean up. Starting migration ...")
 
     try:
-        summary = migrate(source, target, args.dry_run)
+        run = repatch if args.repatch else migrate
+        summary = run(source, target, args.dry_run)
         print_summary(summary, log_file, args.dry_run)
     except SystemExit:
         raise

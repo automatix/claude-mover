@@ -38,7 +38,7 @@ Claude Mover enforces the desktop app part: a real run **aborts** while the desk
 ## Usage
 
 ```
-python claude_mover.py <source> <target> [--dry-run] [--resume]
+python claude_mover.py <source> <target> [--dry-run] [--resume | --repatch]
 ```
 
 | Argument | Description |
@@ -47,6 +47,7 @@ python claude_mover.py <source> <target> [--dry-run] [--resume]
 | `target` | New location to move it to |
 | `--dry-run` | Preview all changes without writing anything |
 | `--resume` | Clean up leftovers from a previous failed migration, then retry |
+| `--repatch` | The folder is already at `<target>`: only rewrite the path references (see below) |
 
 Always run with `--dry-run` first to verify the plan before committing.
 
@@ -193,6 +194,16 @@ python claude_mover.py <source> <target> --resume
 
 A checkpoint file is written to `%LOCALAPPDATA%\ClaudeMover\checkpoints\` at the start of every migration. It records the source, target, backup path, and — on failure — the error message. The file is deleted on success.
 
+## Repairing references after a move
+
+If the folder is already at its new location but path references point back to the old one — typically because the desktop app was running during the move and wrote its old state back — use `--repatch`:
+
+```powershell
+python claude_mover.py <old-location> <new-location> --repatch
+```
+
+`--repatch` never touches the folder. It requires the folder at the new location and none at the old one, renames the session directory if it is still under the old key, and then rewrites all path references exactly like a move does. If the desktop app copied an open session back under the old key, that directory is removed **only** if every file in it is an identical copy of one under the new key; otherwise the tool stops and asks you to merge by hand. Combine with `--dry-run` to preview. Quit the desktop app first, or the tool refuses to run.
+
 ## Tests
 
 Run the test suite with:
@@ -208,7 +219,7 @@ pip install pytest-cov
 python -m pytest test_claude_mover.py --cov=claude_mover --cov-report=term-missing
 ```
 
-The test suite contains `234` tests across `44` test classes with `93%` line coverage.
+The test suite contains `244` tests across `45` test classes with `93%` line coverage.
 
 ## Logs
 
