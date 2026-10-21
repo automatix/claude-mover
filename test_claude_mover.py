@@ -51,6 +51,7 @@ from claude_mover import (
     patch_jsonl,
     remove_backup,
     restore_backup,
+    session_files,
     validate_source,
     validate_target,
 )
@@ -511,6 +512,52 @@ class TestAppSessionFiles(unittest.TestCase):
         _write(f, original)
         self.assertEqual(patch_file(f, old, new, dry_run=False), 0)
         self.assertEqual(f.read_text(encoding="utf-8"), original)
+
+
+class TestSessionFiles(unittest.TestCase):
+    """Issue #29: subagent transcripts are nested and must be found too."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.ctx = Path(self._tmp.name) / "D--workspace-myapp"
+        self.ctx.mkdir()
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_finds_top_level_and_nested_subagent_transcripts(self):
+        _write(self.ctx / "s1.jsonl", "{}\n")
+        _write(self.ctx / "s1" / "subagents" / "agent-a.jsonl", "{}\n")
+        _write(self.ctx / "s1" / "subagents" / "agent-a.meta.json", "{}")
+        found = {p.relative_to(self.ctx).as_posix() for p in session_files(self.ctx)}
+        self.assertEqual(found, {"s1.jsonl", "s1/subagents/agent-a.jsonl"})
+
+    def test_memory_directory_is_excluded(self):
+        _write(self.ctx / "memory" / "notes.jsonl", "{}\n")
+        _write(self.ctx / "s2.jsonl", "{}\n")
+        found = [p.name for p in session_files(self.ctx)]
+        self.assertEqual(found, ["s2.jsonl"])
+
+    def test_migrate_patches_nested_subagent_transcript(self):
+        base = Path(self._tmp.name)
+        projects_dir = base / "projects"
+        source = base / "src_project"
+        target = base / "dst_project"
+        source.mkdir()
+        ctx_src = _make_dir(projects_dir, encode_path(source))
+        src = str(source.resolve())
+        nested = ctx_src / "s1" / "subagents" / "agent-a.jsonl"
+        _write(nested, json.dumps({"cwd": src}) + "\n")
+        checkpoint_dir = base / "checkpoints"
+        checkpoint_dir.mkdir()
+
+        with patch.object(claude_mover, "PROJECTS_DIR", projects_dir),              patch.object(claude_mover, "CHECKPOINT_DIR", checkpoint_dir),              patch.object(claude_mover, "HISTORY_FILE", base / "h.jsonl"),              patch.object(claude_mover, "CLAUDE_JSON", base / ".claude.json"),              patch("claude_mover._move_directory"):
+            summary = claude_mover.migrate(source, target, dry_run=False)
+
+        moved = projects_dir / encode_path(target) / "s1" / "subagents" / "agent-a.jsonl"
+        self.assertEqual(json.loads(moved.read_text(encoding="utf-8"))["cwd"],
+                         str(target.resolve()))
+        self.assertEqual(summary["sessions_migrated"], 1)
 
 
 # ===========================================================================
