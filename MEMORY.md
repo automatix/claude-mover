@@ -249,3 +249,14 @@
 - Tests: `213` (vorher `195`). Echter E2E-Move eines Wegwerfprojekts mit Subagent-Session: alle Pfade umgeschrieben, `claude -p --continue` am neuen Ort setzt die Session fort.
 
 **Result:** Tool wieder kompatibel mit dem aktuellen Stand; Release `v0.2.0`.
+
+## `2026-10-21` – Pfadgrenzen-Fix (#40), Branches behalten, Testdaten entfernt, Release `v0.2.1`
+
+**Request:** Branches nach Merge behalten; den Präfix-Fehler bei der Pfadersetzung beheben; Testdaten der Kompatibilitätsprüfung löschen.
+
+**Done:**
+- Projekt-`CLAUDE.md`: `--delete-branch` entfernt, gemergte Branches bleiben erhalten (PR `#39`).
+- **`#40`** `patch_content` ersetzt nur noch an Pfadgrenzen (`_PATH_END`): Geschwister wie `…\zerobox2`, `…\zerobox-old`, `…\zerobox.bak`, `…\Claude Mover 2` bleiben unberührt; Unterpfade weiterhin ersetzt. `218` Tests.
+- Gelöscht: `D:\workspace\sandbox\cm-e2e-dst`, dessen Kontextverzeichnis, `4` Long-Path-Probe-Kontextverzeichnisse, Scratchpad-Backup `e2e-backup`.
+
+**Result:** Release `v0.2.1`; keine Testreste in `~/.claude.json` / `history.jsonl`.
