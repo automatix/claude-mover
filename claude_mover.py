@@ -519,20 +519,35 @@ def remove_backup(backup: Path, dry_run: bool) -> None:
 # Patching
 # ---------------------------------------------------------------------------
 
+def _read_verbatim(file_path: Path) -> str:
+    """Read a text file without newline translation (CRLF/LF kept as is)."""
+    with open(file_path, encoding="utf-8", newline="") as f:
+        return f.read()
+
+
+def _write_verbatim(file_path: Path, text: str) -> None:
+    """Write text without newline translation, so line endings stay unchanged.
+
+    Path.write_text would turn every '\\n' into '\\r\\n' on Windows (issue #44).
+    """
+    with open(file_path, "w", encoding="utf-8", newline="") as f:
+        f.write(text)
+
+
 def patch_file(file_path: Path, old_path: Path, new_path: Path, dry_run: bool) -> int:
     """Patch a single file. Returns number of changed lines (jsonl) or 1/0 for json."""
-    text = file_path.read_text(encoding="utf-8")
+    text = _read_verbatim(file_path)
     patched = patch_content(text, old_path, new_path)
     if patched == text:
         return 0
     if not dry_run:
-        file_path.write_text(patched, encoding="utf-8")
+        _write_verbatim(file_path, patched)
     return 1
 
 
 def patch_jsonl(file_path: Path, old_path: Path, new_path: Path, dry_run: bool) -> int:
     """Patch a .jsonl file line by line. Returns number of changed lines."""
-    lines = file_path.read_text(encoding="utf-8").splitlines(keepends=True)
+    lines = _read_verbatim(file_path).splitlines(keepends=True)
     changed = 0
     patched_lines = []
     for line in lines:
@@ -541,7 +556,7 @@ def patch_jsonl(file_path: Path, old_path: Path, new_path: Path, dry_run: bool) 
             changed += 1
         patched_lines.append(new_line)
     if changed and not dry_run:
-        file_path.write_text("".join(patched_lines), encoding="utf-8")
+        _write_verbatim(file_path, "".join(patched_lines))
     return changed
 
 
