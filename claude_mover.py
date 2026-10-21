@@ -95,8 +95,45 @@ def encode_path(path: Path) -> str:
       D:\\workspace\\Claude Mover             ->  D--workspace-Claude-Mover
       \\\\wsl.localhost\\ubuntu\\home\\myapp  ->  --wsl-localhost-ubuntu-home-myapp
       \\\\wsl$\\Ubuntu\\home\\myapp           ->  --wsl--Ubuntu-home-myapp
+
+    A name longer than MAX_KEY_LENGTH characters is truncated to that length
+    and suffixed with '-' plus a hash of the full path (issue #30), see
+    _path_hash.
     """
-    return re.sub(r'[^A-Za-z0-9]', '-', _path_to_str(path))
+    raw = _path_to_str(path)
+    encoded = re.sub(r'[^A-Za-z0-9]', '-', raw)
+    if len(encoded) <= MAX_KEY_LENGTH:
+        return encoded
+    return f"{encoded[:MAX_KEY_LENGTH]}-{_path_hash(raw)}"
+
+
+# Claude Code truncates longer project directory names and appends a hash
+# (https://code.claude.com/docs/en/sessions, "Where transcripts are stored").
+MAX_KEY_LENGTH = 200
+
+
+def _path_hash(path_str: str) -> str:
+    """Return the hash suffix Claude Code appends to a truncated project key.
+
+    The docs do not name the algorithm. It was verified empirically against
+    the keys Claude Code 2.1.296 created for four probe directories: the
+    Java-style 32-bit string hash (h = 31*h + c over UTF-16 code units,
+    signed), made absolute and written in base 36.
+    """
+    data = path_str.encode("utf-16-le")
+    h = 0
+    for i in range(0, len(data), 2):
+        h = (31 * h + int.from_bytes(data[i:i + 2], "little")) & 0xFFFFFFFF
+    if h >= 0x80000000:
+        h -= 0x100000000
+    n = abs(h)
+    digits = "0123456789abcdefghijklmnopqrstuvwxyz"
+    out = ""
+    while True:
+        n, r = divmod(n, 36)
+        out = digits[r] + out
+        if n == 0:
+            return out
 
 
 def _decode_dashed_naive(dashed: str) -> Optional[Path]:

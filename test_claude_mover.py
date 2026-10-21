@@ -138,6 +138,34 @@ class TestEncodePath(unittest.TestCase):
         result = encode_path(Path(r"\\wsl$\Ubuntu\home\user\myapp"))
         self.assertEqual(result, "--wsl--Ubuntu-home-user-myapp")
 
+    # Issue #30: keys longer than 200 chars are truncated + hashed. Expected
+    # values are the directory names Claude Code 2.1.296 actually created.
+    _LONG_BASE = (r"C:\Users\automatix\AppData\Local\Temp\claude"
+                  r"\D--workspace-tools-Claude-Mover\836aa4a6-1985-4b22-a0ae-e51a1cecce6a"
+                  r"\scratchpad\longpath-probe\aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+
+    def _long(self, leaf):
+        with patch("claude_mover._path_to_str", return_value=self._LONG_BASE + "\\" + leaf):
+            return encode_path(Path("unused"))
+
+    def test_long_path_truncated_and_hashed_positive_hash(self):
+        key = self._long("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+        self.assertTrue(key.endswith("-bbbbbbbbbbbbbbbbbbb-d2am9h"))
+        self.assertEqual(len(key), 200 + 1 + 6)
+
+    def test_long_path_hash_with_spaces_and_dots(self):
+        key = self._long("Second Probe.dir x1yzxyzxyzxyzxyzxyzxyzxyzxyzxyzxyz")
+        self.assertTrue(key.endswith("-Second-Probe-dir-x1-x2ta2q"))
+
+    def test_long_path_negative_hash_uses_absolute_value(self):
+        key = self._long("neg-probe-0001-zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz")
+        self.assertTrue(key.endswith("-neg-probe-0001-zzzz-51674z"))
+
+    def test_exactly_200_chars_not_hashed(self):
+        raw = "D:\\" + "a" * 197
+        with patch("claude_mover._path_to_str", return_value=raw):
+            self.assertEqual(encode_path(Path("unused")), "D--" + "a" * 197)
+
     def test_unc_wsl_dollar_sleepnote_real_case(self):
         # The exact directory the real CLI creates for the moved SleepNote project.
         result = encode_path(Path(r"\\wsl$\Ubuntu\home\automatix\workspace\SleepNote"))
