@@ -394,6 +394,58 @@ class TestPatchContent(unittest.TestCase):
 # REGRESSION: JSON-encoded double-backslash form (named as specified)
 # ===========================================================================
 
+class TestPatchContentPathBoundary(unittest.TestCase):
+    """Issue #40: a sibling path sharing the source as a prefix is untouched."""
+
+    OLD = Path(r"D:\workspace\sandbox\zerobox")
+    NEW = Path(r"D:\workspace\sandbox\zerobox-moved")
+
+    def _patch(self, text):
+        return patch_content(text, self.OLD, self.NEW)
+
+    def test_sibling_with_suffix_untouched(self):
+        for sibling in (r"D:\workspace\sandbox\zerobox2",
+                        r"D:\workspace\sandbox\zerobox-old",
+                        r"D:\workspace\sandbox\zerobox_v2",
+                        r"D:\workspace\sandbox\zerobox.bak",
+                        r"D:\workspace\sandbox\zerobox 2",
+                        "D:/workspace/sandbox/zerobox2",
+                        "/d/workspace/sandbox/zerobox2",
+                        "D--workspace-sandbox-zerobox-old"):
+            with self.subTest(sibling=sibling):
+                self.assertEqual(self._patch(sibling), sibling)
+
+    def test_json_encoded_sibling_key_untouched(self):
+        line = json.dumps({r"D:\workspace\sandbox\zerobox2": {}})
+        self.assertEqual(self._patch(line), line)
+
+    def test_exact_path_and_children_rewritten(self):
+        cases = {
+            r"D:\workspace\sandbox\zerobox": r"D:\workspace\sandbox\zerobox-moved",
+            r"D:\workspace\sandbox\zerobox\src\a.py": r"D:\workspace\sandbox\zerobox-moved\src\a.py",
+            "D:/workspace/sandbox/zerobox/": "D:/workspace/sandbox/zerobox-moved/",
+            "cd D:\\workspace\\sandbox\\zerobox.": "cd D:\\workspace\\sandbox\\zerobox-moved.",
+            "D--workspace-sandbox-zerobox\\memory": "D--workspace-sandbox-zerobox-moved\\memory",
+        }
+        for old, new in cases.items():
+            with self.subTest(old=old):
+                self.assertEqual(self._patch(old), new)
+
+    def test_json_encoded_exact_and_child_rewritten(self):
+        line = json.dumps({"cwd": r"D:\workspace\sandbox\zerobox",
+                           "file": r"D:\workspace\sandbox\zerobox\a.py"})
+        data = json.loads(self._patch(line))
+        self.assertEqual(data["cwd"], r"D:\workspace\sandbox\zerobox-moved")
+        self.assertEqual(data["file"], r"D:\workspace\sandbox\zerobox-moved\a.py")
+
+    def test_mixed_line_rewrites_only_the_moved_project(self):
+        line = json.dumps({"projects": {r"D:\workspace\sandbox\zerobox": 1,
+                                        r"D:\workspace\sandbox\zerobox2": 2}})
+        keys = list(json.loads(self._patch(line))["projects"])
+        self.assertEqual(keys, [r"D:\workspace\sandbox\zerobox-moved",
+                                r"D:\workspace\sandbox\zerobox2"])
+
+
 class TestPatchContentRegressionJsonDoubleBackslash(unittest.TestCase):
     """Explicit regression test for the JSON-encoded double-backslash bug.
 

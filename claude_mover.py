@@ -387,6 +387,14 @@ def _path_variants(path: Path) -> list[str]:
     ]
 
 
+# A path variant only matches where the path ends: not where a folder name
+# continues, so a sibling like ...\zerobox2, ...\zerobox-old, ...\zerobox.bak
+# or ...\Claude Mover 2 is left alone (issue #40). Separators, quotes, the end
+# of the text and a sentence-ending '.' still count as a boundary, so paths
+# below the moved folder are rewritten as before.
+_PATH_END = r"(?![\w\-]|[. ][\w\-])"
+
+
 def patch_content(content: str, old_path: Path, new_path: Path) -> str:
     """Replace all known representations of old_path with new_path in content."""
     old_variants = _path_variants(old_path)
@@ -394,7 +402,8 @@ def patch_content(content: str, old_path: Path, new_path: Path) -> str:
 
     result = content
     for old_v, new_v in zip(old_variants, new_variants):
-        result = re.sub(re.escape(old_v), lambda _: new_v, result, flags=re.IGNORECASE)
+        result = re.sub(re.escape(old_v) + _PATH_END, lambda _: new_v, result,
+                        flags=re.IGNORECASE)
     return result
 
 
