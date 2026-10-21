@@ -497,6 +497,22 @@ class TestAppSessionFiles(unittest.TestCase):
         self.assertEqual(sorted(p.name for p in found),
                          ["local_new.json", "local_old.json"])
 
+    def test_app_config_files_found_per_data_dir(self):
+        """Issue #32: presets and desktop config are discovered, caches are not."""
+        data = self.tmp / "Claude-Data"
+        d = _make_dir(data, "claude_pzs8sxrjxfjjc")
+        _write(d / "ccd-session-presets.json", "{}")
+        _write(d / "claude_desktop_config.json", "{}")
+        _write(d / "git-worktrees.json", "{}")
+        with patch.object(claude_mover, "APP_DATA_DIR", data):
+            found = [p.name for p in claude_mover.app_config_files()]
+        self.assertEqual(sorted(found),
+                         ["ccd-session-presets.json", "claude_desktop_config.json"])
+
+    def test_app_config_files_empty_without_data_dir(self):
+        with patch.object(claude_mover, "APP_DATA_DIR", self.tmp / "nope"):
+            self.assertEqual(claude_mover.app_config_files(), [])
+
     def test_only_claude_data_location_present(self):
         data = self.tmp / "Claude-Data"
         new_dir = _make_dir(data, "claude_x", "claude-code-sessions", "a", "g")
@@ -1792,6 +1808,26 @@ class TestMigrateAdditional(unittest.TestCase):
 
         self.assertIsNotNone(cp)
         self.assertTrue(cp["failed"])
+
+    def test_desktop_app_config_files_patched(self):
+        """Issue #32: ccd-session-presets.json is rewritten during a move."""
+        source, target, projects_dir, ctx_src, checkpoint_dir = self._setup()
+        _write(ctx_src / "session.jsonl", "nothing\n")
+        data = self.base / "Claude-Data"
+        presets = data / "claude_x" / "ccd-session-presets.json"
+        _write(presets, json.dumps({"byAccount": {"a": {str(source.resolve()): {}}}}))
+
+        with patch.object(claude_mover, "PROJECTS_DIR", projects_dir), \
+             patch.object(claude_mover, "CHECKPOINT_DIR", checkpoint_dir), \
+             patch.object(claude_mover, "HISTORY_FILE", self.base / "h.jsonl"), \
+             patch.object(claude_mover, "CLAUDE_JSON", self.base / ".claude.json"), \
+             patch.object(claude_mover, "APP_DATA_DIR", data), \
+             patch("claude_mover._move_directory"):
+            summary = claude_mover.migrate(source, target, dry_run=False)
+
+        keys = json.loads(presets.read_text(encoding="utf-8"))["byAccount"]["a"]
+        self.assertEqual(list(keys), [str(target.resolve())])
+        self.assertIn(str(presets), summary["config_files_patched"])
 
     def test_warns_when_no_desktop_app_store_found(self):
         """Issue #28: a missing app store is reported, not silently skipped."""

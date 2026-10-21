@@ -63,7 +63,7 @@ The file is organized into clearly delimited sections:
 | **Validation** | `validate_source` / `validate_target` — existence checks with actionable error messages |
 | **Parent directory** | `ensure_parent` — interactive prompt when the target parent is missing |
 | **Backup** | `backup_context` / `restore_backup` / `remove_backup` — safety net around the context rename |
-| **Patching** | `patch_file` (generic), `patch_jsonl` (line-by-line for `.jsonl` files), `session_files` (all transcripts in a context dir, recursive, issue `#29`), `app_session_files` (locate the desktop app session store) |
+| **Patching** | `patch_file` (generic), `patch_jsonl` (line-by-line for `.jsonl` files), `session_files` (all transcripts in a context dir, recursive, issue `#29`), `app_session_files` (locate the desktop app session store), `app_config_files` (desktop app presets + recent folders, issue `#32`) |
 | **WSL translation** | `_wsl_endpoint` (WSL UNC → `(distro, linux_path)`), `_drive_to_wsl_mount` (drive path → `/mnt/<d>/…`), `_wsl_path_in_distro` (path as seen inside a given distro) |
 | **Copy verification** | `_manifest_windows` / `_manifest_wsl` / `_parse_find_manifest` (build a `{relpath: (kind, size)}` manifest), `_compare_manifests` / `_verify_or_raise` (confirm every source entry reached the target) |
 | **Directory move** | `_move_directory` — dispatches to `_move_directory_wsl` (native `wsl.exe cp -a` for any WSL endpoint) or robocopy (long-path safety) — both verify before deleting the source; `_run_wsl_bash` (run a bash script in a distro via stdin); `_delete_source` (remove a verified source, non-fatal on lock); `_rmtree_robust` — robocopy /MIR fallback for deletion |
@@ -135,6 +135,7 @@ back to a path, so pass the real path for such projects.
 - `~/.claude/history.jsonl` — global history index; contains absolute path references that must be rewritten on move.
 - `~/.claude.json` (in the **home directory**, NOT inside `~/.claude/`; with `CLAUDE_CONFIG_DIR` set it is `$CLAUDE_CONFIG_DIR/.claude.json` instead, see `_config_paths`, issue `#31`) — global app config read by the Claude desktop app; stores project settings keyed by path (both backslash and forward-slash forms) and the GitHub repo → local path map. The `backups/` folder inside `~/.claude/` contains timestamped backups of this file made before each write.
 - `%LOCALAPPDATA%\Claude-Data\claude_<pkg>\claude-code-sessions\<account>\<group>\local_<id>.json` — the Claude **desktop app** (MSIX) per-session store (issue `#28`: app data moved here from the package-virtualized `%LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming\Claude\`, which now only holds a `.user-data-left.*` marker; the legacy path is still searched as a fallback, and a warning is logged when neither exists), **separate from `~/.claude/`**. Each file holds `cwd` and `originCwd`. These are what actually drive the app's "Trust this workspace?" dialog, "Show in Explorer", and "Copy path" (see `logs\main.log`: `LocalSessions.checkTrust: cwd=...`). They survive a folder move and must be patched, or the app keeps showing the old path even after `~/.claude.json` is fixed.
+- `%LOCALAPPDATA%\Claude-Data\claude_<pkg>\ccd-session-presets.json` (per-folder session presets, keyed by path) and `claude_desktop_config.json` (`preferences`, incl. recently used folders) also hold absolute project paths and are patched (issue `#32`). `git-shadow\<hash>\` (`shadow-of`) and `git-worktrees.json` (`untrackedDirGc` sightings) are derived caches the app rebuilds; they are deliberately not touched.
 - `.claude/` folder and `CLAUDE.md` inside the project folder travel with the folder automatically — no special handling needed.
 - `.mcp.json` may contain absolute paths and must be patched if present.
 - WSL projects accessed from Windows via `\\wsl.localhost\...` stay in the Windows `%USERPROFILE%\.claude\` store — no cross-store migration needed. There is no `claude` CLI (and no `~/.claude`) inside the distro; the desktop app runs the CLI on the Windows side with the UNC `cwd`.
@@ -148,7 +149,7 @@ Run the test suite with:
 python -m pytest test_claude_mover.py
 ```
 
-`test_claude_mover.py` contains `210` tests across `41` test classes with `93%` line coverage. Coverage is measured via `pytest-cov` (`pip install pytest-cov`).
+`test_claude_mover.py` contains `213` tests across `41` test classes with `93%` line coverage. Coverage is measured via `pytest-cov` (`pip install pytest-cov`).
 
 The uncovered lines (`ensure_parent` interactive prompt, `if __name__ == "__main__"`) require interactive `input()` mocking or direct script execution and are intentionally left for manual verification via `--dry-run`.
 
