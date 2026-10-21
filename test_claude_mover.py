@@ -431,6 +431,17 @@ class TestPatchContentPathBoundary(unittest.TestCase):
             with self.subTest(old=old):
                 self.assertEqual(self._patch(old), new)
 
+    def test_path_followed_by_command_option_rewritten(self):
+        """Issue #45: 'find <path> -type f' must be rewritten."""
+        self.assertEqual(
+            self._patch("find /d/workspace/sandbox/zerobox -type f"),
+            "find /d/workspace/sandbox/zerobox-moved -type f",
+        )
+        self.assertEqual(
+            self._patch(r"dir D:\workspace\sandbox\zerobox /s"),
+            r"dir D:\workspace\sandbox\zerobox-moved /s",
+        )
+
     def test_json_encoded_exact_and_child_rewritten(self):
         line = json.dumps({"cwd": r"D:\workspace\sandbox\zerobox",
                            "file": r"D:\workspace\sandbox\zerobox\a.py"})

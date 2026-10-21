@@ -391,8 +391,10 @@ def _path_variants(path: Path) -> list[str]:
 # continues, so a sibling like ...\zerobox2, ...\zerobox-old, ...\zerobox.bak
 # or ...\Claude Mover 2 is left alone (issue #40). Separators, quotes, the end
 # of the text and a sentence-ending '.' still count as a boundary, so paths
-# below the moved folder are rewritten as before.
-_PATH_END = r"(?![\w\-]|[. ][\w\-])"
+# below the moved folder are rewritten as before. A space blocks only when a
+# word follows; a space and '-' is a command option, e.g. "find <path> -type"
+# (issue #45).
+_PATH_END = r"(?![\w\-]|\.[\w\-]| \w)"
 
 
 def patch_content(content: str, old_path: Path, new_path: Path) -> str:
