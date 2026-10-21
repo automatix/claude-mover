@@ -234,3 +234,18 @@
 - **Tests/Doku:** `195` Tests / `39` Klassen / `93%` (vorher `161`/`23`/`92%`); neue Klassen für WSL-Pfad-Übersetzung, Manifeste, Vergleich, `_delete_source`, `_move_directory_wsl`, Dispatch, WSL-Bash-Glue. `CLAUDE.md` (Architektur-Tabelle, Key-Design-Points) + `README.md` (WSL-Copy-Hinweis, „Copy verification"-Abschnitt) aktualisiert. Issue [#26](https://github.com/automatix/claude-mover/issues/26).
 
 **Result:** Stiller Datenverlust beim WSL-Move ist ausgeschlossen — keine Quell-Löschung ohne vollständige, verifizierte Kopie; WSL-Moves laufen jetzt nativ und zuverlässig. SleepNote-Projektdateien selbst waren bereits verloren (nur aus separater Sicherung wiederherstellbar); der Fix verhindert die Wiederholung.
+
+## `2026-10-21` – Kompatibilitätsprüfung gegen aktuelle Claude-Doku + Fixes (#28–#32), Release `v0.2.0`
+
+**Request:** Prüfen, ob das Vorgehen nach über `4` Monaten noch zur Claude-Dokumentation passt; Test fahren. Danach: alle fünf Befunde als Tickets anlegen und sofort beheben, zusätzlich echten Test mit Wegwerfprojekt.
+
+**Done:**
+- Doku (`code.claude.com/docs/en/sessions`, `claude-directory`, `env-vars`, `memory`) + lokale Ablage (Claude Code `2.1.296`) abgeglichen. Kern (Encoding, `history.jsonl`, `~/.claude.json`) weiterhin korrekt.
+- **`#28`** Desktop-App speichert seit `2026-10-19` unter `%LOCALAPPDATA%\Claude-Data\claude_<pkg>\`; alter `Packages\Claude_*`-Pfad nur noch Fallback; Warnung, wenn kein Store gefunden.
+- **`#29`** Subagent-Transkripte `<session>/subagents/*.jsonl` werden rekursiv gepatcht (`session_files`, ohne `memory/`).
+- **`#30`** Keys `> 200` Zeichen: Kürzung + Hash. Algorithmus (undokumentiert) empirisch mit `4` Probe-Verzeichnissen ermittelt: Java-String-Hash (signed 32-bit, UTF-16), Betrag, Basis `36`.
+- **`#31`** `CLAUDE_CONFIG_DIR` (inkl. `.claude.json` darin, empirisch bestätigt); Abbruch bei `CLAUDE_CODE_PROJECT_DIR_NAME`.
+- **`#32`** `ccd-session-presets.json` + `claude_desktop_config.json` werden gepatcht; `git-shadow/`, `git-worktrees.json` bewusst nicht (Caches).
+- Tests: `213` (vorher `195`). Echter E2E-Move eines Wegwerfprojekts mit Subagent-Session: alle Pfade umgeschrieben, `claude -p --continue` am neuen Ort setzt die Session fort.
+
+**Result:** Tool wieder kompatibel mit dem aktuellen Stand; Release `v0.2.0`.
