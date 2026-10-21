@@ -260,3 +260,17 @@
 - Gelöscht: `D:\workspace\sandbox\cm-e2e-dst`, dessen Kontextverzeichnis, `4` Long-Path-Probe-Kontextverzeichnisse, Scratchpad-Backup `e2e-backup`.
 
 **Result:** Release `v0.2.1`; keine Testreste in `~/.claude.json` / `history.jsonl`.
+
+## `2026-10-22` – Produktiv-Move `system-transfer`, Fixes #44–#46, Release `v0.2.2`
+
+**Request:** Projekt `C:\Users\automatix\Desktop\system-transfer` nach `D:\system-transfer` verschieben (Befehl geben, nach dem Lauf prüfen); gefundene Fehler beheben.
+
+**Done:**
+- Move vom User ausgeführt; Prüfung: Ordner, Kontextverzeichnis, `4` Transkripte, `history.jsonl` (`358` Zeilen), `~/.claude.json` korrekt, kein Rest des alten Pfads außer in `.claude/settings.local.json`.
+- **`#44`** Gepatchte Dateien wurden unter Windows komplett auf CRLF umgeschrieben (seit `v0.1.0`) → `_read_verbatim` / `_write_verbatim` mit `newline=""`.
+- **`#45`** Regression aus `#40`: Pfad vor ` -option` wurde nicht ersetzt → Leerzeichen blockiert nur vor Wortzeichen.
+- **`#46`** Mehrfach maskierte Backslash-Pfade (Befehle in JSON-Berechtigungsregeln) → `_backslash_pattern` mit erfasster Backslash-Folge + Rückverweis, Tiefe bleibt erhalten.
+- `D:\system-transfer\.claude\settings.local.json` auf LF zurückgesetzt und mit dem korrigierten Tool nachgezogen: `21` Zeilen Diff, ausschließlich Pfade; nicht committet (Repository des Users).
+- Tests `227`, Abdeckung `93%`.
+
+**Result:** Release `v0.2.2`. `history.jsonl`, `~/.claude.json` und die Transkripte von `system-transfer` bleiben CRLF (funktional unkritisch).
