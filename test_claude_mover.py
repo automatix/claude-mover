@@ -2037,6 +2037,134 @@ class TestPrintSummary(unittest.TestCase):
 # main()
 # ===========================================================================
 
+class TestRepatch(unittest.TestCase):
+    """Issue #53: rewrite references for a folder that is already moved."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.base = Path(self._tmp.name)
+        self.projects = self.base / "projects"
+        self.old = self.base / "old_project"          # no longer exists
+        self.new = self.base / "new_project"
+        self.new.mkdir()
+        self.history = self.base / "history.jsonl"
+        self.claude_json = self.base / ".claude.json"
+        self.data = self.base / "Claude-Data"
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _run(self, dry_run=False):
+        with patch.object(claude_mover, "PROJECTS_DIR", self.projects), \
+             patch.object(claude_mover, "HISTORY_FILE", self.history), \
+             patch.object(claude_mover, "CLAUDE_JSON", self.claude_json), \
+             patch.object(claude_mover, "APP_DATA_DIR", self.data), \
+             patch("claude_mover._move_directory") as move:
+            summary = claude_mover.repatch(self.old, self.new, dry_run)
+        move.assert_not_called()
+        return summary
+
+    def _app_session(self, cwd):
+        f = self.data / "claude_x" / "claude-code-sessions" / "a" / "g" / "local_1.json"
+        _write(f, json.dumps({"cwd": cwd, "originCwd": cwd}))
+        return f
+
+    def test_reverted_app_store_is_repatched(self):
+        old_s, new_s = str(self.old.resolve()), str(self.new.resolve())
+        _write(_make_dir(self.projects, encode_path(self.new)) / "s.jsonl",
+               json.dumps({"cwd": new_s}) + "\n")
+        f = self._app_session(old_s)
+        _write(self.claude_json, json.dumps({"projects": {old_s: {}}}))
+        summary = self._run()
+        self.assertEqual(json.loads(f.read_text(encoding="utf-8"))["cwd"], new_s)
+        self.assertEqual(list(json.loads(self.claude_json.read_text(encoding="utf-8"))["projects"]),
+                         [new_s])
+        self.assertEqual(summary["app_sessions_patched"], 1)
+        self.assertEqual(summary["mode"], "Repatch")
+
+    def test_context_still_under_old_key_is_renamed_and_patched(self):
+        old_s, new_s = str(self.old.resolve()), str(self.new.resolve())
+        _write(_make_dir(self.projects, encode_path(self.old)) / "s.jsonl",
+               json.dumps({"cwd": old_s}) + "\n")
+        self._run()
+        moved = self.projects / encode_path(self.new) / "s.jsonl"
+        self.assertFalse((self.projects / encode_path(self.old)).exists())
+        self.assertEqual(json.loads(moved.read_text(encoding="utf-8"))["cwd"], new_s)
+
+    def test_dry_run_changes_nothing(self):
+        old_s = str(self.old.resolve())
+        ctx = _make_dir(self.projects, encode_path(self.old))
+        _write(ctx / "s.jsonl", json.dumps({"cwd": old_s}) + "\n")
+        f = self._app_session(old_s)
+        before = f.read_bytes()
+        summary = self._run(dry_run=True)
+        self.assertTrue(ctx.exists())
+        self.assertEqual(f.read_bytes(), before)
+        self.assertEqual(summary["app_sessions_patched"], 1)
+
+    def test_refuses_when_folder_not_at_new_location(self):
+        shutil.rmtree(self.new)
+        with self.assertRaises(SystemExit):
+            self._run()
+
+    def test_refuses_when_folder_still_at_old_location(self):
+        self.old.mkdir()
+        with self.assertRaises(SystemExit):
+            self._run()
+
+    def test_refuses_when_both_context_keys_differ(self):
+        _write(_make_dir(self.projects, encode_path(self.old)) / "s.jsonl", "a\n")
+        _write(_make_dir(self.projects, encode_path(self.new)) / "s.jsonl", "b\n")
+        with self.assertRaises(SystemExit):
+            self._run()
+        self.assertTrue((self.projects / encode_path(self.old) / "s.jsonl").exists())
+
+    def test_refuses_when_old_key_has_extra_file(self):
+        old_ctx = _make_dir(self.projects, encode_path(self.old))
+        new_ctx = _make_dir(self.projects, encode_path(self.new))
+        _write(old_ctx / "s.jsonl", "a\n")
+        _write(new_ctx / "s.jsonl", "a\n")
+        _write(old_ctx / "other.jsonl", "c\n")
+        with self.assertRaises(SystemExit):
+            self._run()
+
+    def test_identical_copy_under_old_key_is_removed(self):
+        """The desktop app copied an open session back under the old key."""
+        old_ctx = _make_dir(self.projects, encode_path(self.old))
+        new_ctx = _make_dir(self.projects, encode_path(self.new))
+        for ctx in (old_ctx, new_ctx):
+            _write(ctx / "s1.jsonl", "same\n")
+            _write(ctx / "s1" / "subagents" / "a.jsonl", "same\n")
+        _write(new_ctx / "s2.jsonl", "only new\n")
+        self._run(dry_run=True)
+        self.assertTrue(old_ctx.exists())
+        self._run()
+        self.assertFalse(old_ctx.exists())
+        self.assertTrue((new_ctx / "s2.jsonl").exists())
+
+    def test_main_dispatches_to_repatch(self):
+        argv = ["claude-mover", r"D:\a", r"D:\b", "--repatch"]
+        with patch("sys.argv", argv), \
+             patch("claude_mover.setup_logging", return_value=Path(r"C:\fake.log")), \
+             patch("claude_mover.repatch", return_value=_new_summary_for_test()) as rp, \
+             patch("claude_mover.migrate") as mg, \
+             patch("claude_mover.print_summary"):
+            claude_mover.main()
+        rp.assert_called_once()
+        mg.assert_not_called()
+
+    def test_repatch_and_resume_rejected(self):
+        argv = ["claude-mover", r"D:\a", r"D:\b", "--repatch", "--resume"]
+        with patch("sys.argv", argv), patch("sys.stderr"):
+            with self.assertRaises(SystemExit) as ctx:
+                claude_mover.main()
+        self.assertEqual(ctx.exception.code, 2)
+
+
+def _new_summary_for_test():
+    return claude_mover._new_summary(Path(r"D:\a"), Path(r"D:\b"), "Repatch")
+
+
 class TestRunningClaude(unittest.TestCase):
     """Issue #51: a running desktop app reverts the patches; refuse to run."""
 

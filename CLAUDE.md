@@ -36,6 +36,9 @@ python claude_mover.py <source> <target> --dry-run
 
 # Clean up leftover artifacts from a failed migration, then retry
 python claude_mover.py <source> <target> --resume
+
+# Folder already moved, references reverted: rewrite only the references
+python claude_mover.py <old> <new> --repatch
 ```
 
 All path formats are accepted for `<source>` and `<target>`:
@@ -69,7 +72,7 @@ The file is organized into clearly delimited sections:
 | **Directory move** | `_move_directory` — dispatches to `_move_directory_wsl` (native `wsl.exe cp -a` for any WSL endpoint) or robocopy (long-path safety) — both verify before deleting the source; `_run_wsl_bash` (run a bash script in a distro via stdin); `_delete_source` (remove a verified source, non-fatal on lock); `_rmtree_robust` — robocopy /MIR fallback for deletion |
 | **Running Claude instances** | `check_running_claude` — aborts a real run while the desktop app runs, warns about CLI sessions (`_running_claude_processes` via `Get-CimInstance`, `_is_desktop_app` by install path; issue `#51`) |
 | **Checkpoint** | `_write_checkpoint` / `_read_checkpoint` / `_clear_checkpoint` — persist migration state to `%LOCALAPPDATA%\ClaudeMover\checkpoints\` |
-| **Migration** | `migrate` — orchestrates the seven steps and rolls back on failure |
+| **Migration** | `migrate` — orchestrates the seven steps and rolls back on failure; `_patch_sessions` (step 2) and `_patch_references` (steps 4-7) are shared with `repatch` (`--repatch`, issue `#53`: folder already moved, references only; drops an identical duplicate session directory under the old key via `_is_duplicate_context`) |
 | **Summary** | `print_summary` — final report |
 | **Entry point** | `main` — argument parsing, calls `migrate`, surfaces errors |
 
@@ -85,6 +88,7 @@ The file is organized into clearly delimited sections:
 - **Line endings are preserved (issue `#44`):** `patch_file` / `patch_jsonl` read and write via `_read_verbatim` / `_write_verbatim` (`newline=""`). `Path.write_text` would convert every file it touches to CRLF on Windows.
 - **Path boundary (issue `#40`):** `patch_content` replaces a variant only where the path ends — followed by a separator, a quote, the end of the text, or a sentence-ending `.` — never where a folder name continues. A sibling such as `...\zerobox2`, `...\zerobox-old`, `...\zerobox.bak` or `...\Claude Mover 2` (and the dashed `...-zerobox-old`) stays untouched; paths below the moved folder are still rewritten. A space followed by `-` (a command option, `find <path> -type f`) counts as a boundary (issue `#45`). Trade-off: a path followed by a space and a word (prose, or a second command argument) is left as is, because it cannot be told apart from a sibling such as `Claude Mover 2`.
 - **Desktop app must not run (issue `#51`):** observed in production: the app, left running during a move, wrote its in-memory session store and `claude_desktop_config.json` back minutes later and reverted the patches. `main` therefore aborts a real run when a `claude.exe` from the MSIX package (`WindowsApps\Claude_*`), `Claude-Data` or a non-MSIX `AnthropicClaude` install is running. Other `claude.exe` (CLI) processes only warn: the mover may be started from one, and no revert by the CLI has been observed. Dry runs only warn.
+- **`--repatch` (issue `#53`):** for a folder already at the new location whose references were reverted (or a hand-made move). Never touches the folder. Observed in production: a desktop app left running during the move also **copied an open session back** under the old key (`D--…-sandbox-zerobox`, byte-identical to the moved one). `repatch` removes such a directory only if every file is an identical copy under the new key (a session ID held by two projects makes `claude --resume <id>` report not-found); any difference stops the run.
 - The Claude context directory is renamed **before** session files are patched; if patching targets the renamed directory, `dry_run` mode reads from the original to avoid mutating state.
 - Backup is created before any write and removed only on full success. On any exception, `restore_backup` puts the context directory back so the source project remains intact.
 - **Copy-then-verify-then-delete (issue `#26`):** the folder move never deletes the source until every source entry is confirmed present in the target. `_move_directory` copies, builds a manifest of both trees (relative path + kind + file size), and only deletes the source when `_compare_manifests` finds no missing or mismatched entries; otherwise it raises with the source left intact. This closes a data-loss bug where a copy reported success but was silently incomplete.
@@ -155,7 +159,7 @@ Run the test suite with:
 python -m pytest test_claude_mover.py
 ```
 
-`test_claude_mover.py` contains `234` tests across `44` test classes with `93%` line coverage. Coverage is measured via `pytest-cov` (`pip install pytest-cov`).
+`test_claude_mover.py` contains `244` tests across `45` test classes with `93%` line coverage. Coverage is measured via `pytest-cov` (`pip install pytest-cov`).
 
 The uncovered lines (`ensure_parent` interactive prompt, `if __name__ == "__main__"`) require interactive `input()` mocking or direct script execution and are intentionally left for manual verification via `--dry-run`.
 
