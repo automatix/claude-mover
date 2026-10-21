@@ -57,7 +57,7 @@ The file is organized into clearly delimited sections:
 | Section | Responsibility |
 |---|---|
 | **Logging** | File + stdout logging setup; dry-run prefix |
-| **Path utilities** | `encode_path` (absolute path → dashed key), `normalize_path` (accepts all path formats), `_canonicalize_wsl` (WSL UNC → canonical `wsl.localhost` form), `_is_noncanonical_wsl_input`, `_decode_dashed_naive`, `_decode_dashed_unc_naive`, `_UNC_DASHED_SERVERS` |
+| **Path utilities** | `encode_path` (absolute path → dashed key), `_path_hash` (hash suffix for keys over `200` chars), `normalize_path` (accepts all path formats), `_canonicalize_wsl` (WSL UNC → canonical `wsl.localhost` form), `_is_noncanonical_wsl_input`, `_decode_dashed_naive`, `_decode_dashed_unc_naive`, `_UNC_DASHED_SERVERS` |
 | **Path variant helpers** | `_path_variants` returns the `5` string representations of a path that may appear in files; `patch_content` replaces all of them in a string |
 | **Validation** | `validate_source` / `validate_target` — existence checks with actionable error messages |
 | **Parent directory** | `ensure_parent` — interactive prompt when the target parent is missing |
@@ -111,6 +111,15 @@ Examples:
 | `\\wsl.localhost\ubuntu\home\automatix\workspace\FooBarWSL` | `--wsl-localhost-ubuntu-home-automatix-workspace-FooBarWSL` |
 | `\\wsl$\Ubuntu\home\automatix\workspace\SleepNote` | `--wsl--Ubuntu-home-automatix-workspace-SleepNote` |
 
+**Long paths (issue `#30`):** if the encoded name exceeds `200` characters,
+Claude Code keeps the first `200` and appends `-` plus a hash of the full path
+([docs](https://code.claude.com/docs/en/sessions)). The docs don't name the
+algorithm; it was verified empirically against Claude Code `2.1.296`: the
+Java-style signed 32-bit string hash (`h = 31*h + c` over UTF-16 code units)
+of the backslash path, made absolute and written in base `36`
+(`_path_hash`). A key like `…-bbbbbbbbbbbbbbbbbbb-d2am9h` cannot be decoded
+back to a path, so pass the real path for such projects.
+
 > A Windows→WSL move is **not** a cross-store migration: there is no `claude`
 > CLI inside the WSL distro, so the desktop app runs the CLI on the Windows side
 > with the UNC `cwd`, and sessions stay in the Windows `%USERPROFILE%\.claude\`
@@ -121,7 +130,7 @@ Examples:
 ## Domain knowledge
 
 - `~/.claude/projects/<encoded-path>/` — one directory per project; contains `<session>.jsonl` transcripts, nested `<session>/subagents/*.jsonl` subagent transcripts (also carrying `cwd`), and `memory/` (auto memory).
-- Path encoding: every non-alphanumeric character → `-`, case preserved (see the [Path encoding](#path-encoding-drive-letter-and-unc--wsl) section). E.g. `D:\workspace\myapp` → `D--workspace-myapp`.
+- Path encoding: every non-alphanumeric character → `-`, case preserved, names over `200` characters truncated + hashed (see the [Path encoding](#path-encoding-drive-letter-and-unc--wsl) section). E.g. `D:\workspace\myapp` → `D--workspace-myapp`.
 - `~/.claude/history.jsonl` — global history index; contains absolute path references that must be rewritten on move.
 - `~/.claude.json` (in the **home directory**, NOT inside `~/.claude/`) — global app config read by the Claude desktop app; stores project settings keyed by path (both backslash and forward-slash forms) and the GitHub repo → local path map. The `backups/` folder inside `~/.claude/` contains timestamped backups of this file made before each write.
 - `%LOCALAPPDATA%\Claude-Data\claude_<pkg>\claude-code-sessions\<account>\<group>\local_<id>.json` — the Claude **desktop app** (MSIX) per-session store (issue `#28`: app data moved here from the package-virtualized `%LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming\Claude\`, which now only holds a `.user-data-left.*` marker; the legacy path is still searched as a fallback, and a warning is logged when neither exists), **separate from `~/.claude/`**. Each file holds `cwd` and `originCwd`. These are what actually drive the app's "Trust this workspace?" dialog, "Show in Explorer", and "Copy path" (see `logs\main.log`: `LocalSessions.checkTrust: cwd=...`). They survive a folder move and must be patched, or the app keeps showing the old path even after `~/.claude.json` is fixed.
@@ -138,7 +147,7 @@ Run the test suite with:
 python -m pytest test_claude_mover.py
 ```
 
-`test_claude_mover.py` contains `201` tests across `40` test classes with `93%` line coverage. Coverage is measured via `pytest-cov` (`pip install pytest-cov`).
+`test_claude_mover.py` contains `205` tests across `40` test classes with `93%` line coverage. Coverage is measured via `pytest-cov` (`pip install pytest-cov`).
 
 The uncovered lines (`ensure_parent` interactive prompt, `if __name__ == "__main__"`) require interactive `input()` mocking or direct script execution and are intentionally left for manual verification via `--dry-run`.
 
