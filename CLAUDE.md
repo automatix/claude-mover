@@ -59,7 +59,7 @@ The file is organized into clearly delimited sections:
 | **Configuration** | `_config_paths` — resolves `CLAUDE_DIR` / `CLAUDE_JSON`, honouring `CLAUDE_CONFIG_DIR` (issue `#31`); `main` refuses `CLAUDE_CODE_PROJECT_DIR_NAME` |
 | **Logging** | File + stdout logging setup; dry-run prefix |
 | **Path utilities** | `encode_path` (absolute path → dashed key), `_path_hash` (hash suffix for keys over `200` chars), `normalize_path` (accepts all path formats), `_canonicalize_wsl` (WSL UNC → canonical `wsl.localhost` form), `_is_noncanonical_wsl_input`, `_decode_dashed_naive`, `_decode_dashed_unc_naive`, `_UNC_DASHED_SERVERS` |
-| **Path variant helpers** | `_path_variants` returns the `5` string representations of a path that may appear in files; `patch_content` replaces all of them in a string, only where the path ends (`_PATH_END`, issue `#40`) |
+| **Path variant helpers** | `_path_variants` returns the `6` string representations of a path that may appear in files; `patch_content` replaces all of them in a string, only where the path ends (`_PATH_END`, issue `#40`) |
 | **Validation** | `validate_source` / `validate_target` — existence checks with actionable error messages |
 | **Parent directory** | `ensure_parent` — interactive prompt when the target parent is missing |
 | **Backup** | `backup_context` / `restore_backup` / `remove_backup` — safety net around the context rename |
@@ -150,7 +150,7 @@ Run the test suite with:
 python -m pytest test_claude_mover.py
 ```
 
-`test_claude_mover.py` contains `218` tests across `42` test classes with `93%` line coverage. Coverage is measured via `pytest-cov` (`pip install pytest-cov`).
+`test_claude_mover.py` contains `218` tests across `42` test classes with `92%` line coverage. Coverage is measured via `pytest-cov` (`pip install pytest-cov`).
 
 The uncovered lines (`ensure_parent` interactive prompt, `if __name__ == "__main__"`) require interactive `input()` mocking or direct script execution and are intentionally left for manual verification via `--dry-run`.
 
