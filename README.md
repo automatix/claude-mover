@@ -146,7 +146,7 @@ Yes, fully. Claude Code will find all previous sessions at the new path exactly 
 
 ### Does this work with the Claude desktop app and IDE extensions?
 
-Claude Code CLI, the VS Code and JetBrains extensions, and the Claude desktop app all share the same `~/.claude/projects/` store for session history. The Claude desktop app additionally keeps its own per-session `cwd`/`originCwd` pointers in a separate store (`%LOCALAPPDATA%\Packages\Claude_*\...\claude-code-sessions\`), which is what its trust dialog, "Show in Explorer", and "Copy path" rely on. Claude Mover patches that store too, so a move is transparent to all of them. **Note:** the desktop app must be fully closed when you run the move, otherwise it rewrites these pointers from memory and reverts the change.
+Claude Code CLI, the VS Code and JetBrains extensions, and the Claude desktop app all share the same `~/.claude/projects/` store for session history. The Claude desktop app additionally keeps its own per-session `cwd`/`originCwd` pointers in a separate store (`%LOCALAPPDATA%\Claude-Data\claude_*\claude-code-sessions\`; older app versions used `%LOCALAPPDATA%\Packages\Claude_*\...\claude-code-sessions\`, which is still searched), which is what its trust dialog, "Show in Explorer", and "Copy path" rely on. Claude Mover patches that store too, so a move is transparent to all of them. If neither location exists, it logs a warning instead of silently skipping the step. **Note:** the desktop app must be fully closed when you run the move, otherwise it rewrites these pointers from memory and reverts the change.
 
 It has no effect on **Claude.ai** (the web app) — web conversations are stored server-side and are unrelated to the local project store.
 
