@@ -31,7 +31,9 @@ If you run Claude Code with `CLAUDE_CONFIG_DIR`, run Claude Mover from a shell w
 **Close every Claude instance first** — the desktop app (including its tray icon) and any running Claude Code CLI or IDE-extension sessions. This is a correctness requirement, not just a precaution, for two independent reasons:
 
 1. **File handles (Windows):** an open session for the source project holds handles on its context directory or the project folder, which can make the folder move fail.
-2. **In-memory overwrite:** the Claude desktop app keeps `~/.claude.json` **and** its own session store (`claude-code-sessions\*.json`) in memory and rewrites them on its next save. If it is running during the move, it reverts the path patches from steps `5`–`6`, so the app keeps showing the **old** path even though the move otherwise succeeded.
+2. **In-memory overwrite:** the Claude desktop app keeps `~/.claude.json` **and** its own session store (`claude-code-sessions\*.json`) in memory and rewrites them on its next save. If it is running during the move, it reverts the path patches from steps `5`–`6`, so the app keeps showing the **old** path even though the move otherwise succeeded. This has been observed in practice: the app reverted the changes within minutes of a move.
+
+Claude Mover enforces the desktop app part: a real run **aborts** while the desktop app is running and lists its process IDs. Running Claude Code CLI sessions only produce a warning, since you may start the mover from one; still close any session of the project you are moving. A `--dry-run` only warns.
 
 ## Usage
 
@@ -206,7 +208,7 @@ pip install pytest-cov
 python -m pytest test_claude_mover.py --cov=claude_mover --cov-report=term-missing
 ```
 
-The test suite contains `227` tests across `43` test classes with `93%` line coverage.
+The test suite contains `233` tests across `44` test classes with `93%` line coverage.
 
 ## Logs
 

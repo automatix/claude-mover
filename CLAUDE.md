@@ -67,6 +67,7 @@ The file is organized into clearly delimited sections:
 | **WSL translation** | `_wsl_endpoint` (WSL UNC → `(distro, linux_path)`), `_drive_to_wsl_mount` (drive path → `/mnt/<d>/…`), `_wsl_path_in_distro` (path as seen inside a given distro) |
 | **Copy verification** | `_manifest_windows` / `_manifest_wsl` / `_parse_find_manifest` (build a `{relpath: (kind, size)}` manifest), `_compare_manifests` / `_verify_or_raise` (confirm every source entry reached the target) |
 | **Directory move** | `_move_directory` — dispatches to `_move_directory_wsl` (native `wsl.exe cp -a` for any WSL endpoint) or robocopy (long-path safety) — both verify before deleting the source; `_run_wsl_bash` (run a bash script in a distro via stdin); `_delete_source` (remove a verified source, non-fatal on lock); `_rmtree_robust` — robocopy /MIR fallback for deletion |
+| **Running Claude instances** | `check_running_claude` — aborts a real run while the desktop app runs, warns about CLI sessions (`_running_claude_processes` via `Get-CimInstance`, `_is_desktop_app` by install path; issue `#51`) |
 | **Checkpoint** | `_write_checkpoint` / `_read_checkpoint` / `_clear_checkpoint` — persist migration state to `%LOCALAPPDATA%\ClaudeMover\checkpoints\` |
 | **Migration** | `migrate` — orchestrates the seven steps and rolls back on failure |
 | **Summary** | `print_summary` — final report |
@@ -83,6 +84,7 @@ The file is organized into clearly delimited sections:
   - **Any escaping depth (issue `#46`):** the backslash variant is matched via `_backslash_pattern`, not literally: the first separator captures the run of backslashes (`1`, `2`, `4`, `8`, …), every further separator must repeat it, and the replacement uses the same run. This covers the JSON-encoded form and paths nested deeper, e.g. Bash commands stored as strings in `.claude/settings.local.json` permission rules. The literal 6th variant is therefore skipped in `patch_content`.
 - **Line endings are preserved (issue `#44`):** `patch_file` / `patch_jsonl` read and write via `_read_verbatim` / `_write_verbatim` (`newline=""`). `Path.write_text` would convert every file it touches to CRLF on Windows.
 - **Path boundary (issue `#40`):** `patch_content` replaces a variant only where the path ends — followed by a separator, a quote, the end of the text, or a sentence-ending `.` — never where a folder name continues. A sibling such as `...\zerobox2`, `...\zerobox-old`, `...\zerobox.bak` or `...\Claude Mover 2` (and the dashed `...-zerobox-old`) stays untouched; paths below the moved folder are still rewritten. A space followed by `-` (a command option, `find <path> -type f`) counts as a boundary (issue `#45`). Trade-off: a path followed by a space and a word (prose, or a second command argument) is left as is, because it cannot be told apart from a sibling such as `Claude Mover 2`.
+- **Desktop app must not run (issue `#51`):** observed in production: the app, left running during a move, wrote its in-memory session store and `claude_desktop_config.json` back minutes later and reverted the patches. `main` therefore aborts a real run when a `claude.exe` from the MSIX package (`WindowsApps\Claude_*`), `Claude-Data` or a non-MSIX `AnthropicClaude` install is running. Other `claude.exe` (CLI) processes only warn: the mover may be started from one, and no revert by the CLI has been observed. Dry runs only warn.
 - The Claude context directory is renamed **before** session files are patched; if patching targets the renamed directory, `dry_run` mode reads from the original to avoid mutating state.
 - Backup is created before any write and removed only on full success. On any exception, `restore_backup` puts the context directory back so the source project remains intact.
 - **Copy-then-verify-then-delete (issue `#26`):** the folder move never deletes the source until every source entry is confirmed present in the target. `_move_directory` copies, builds a manifest of both trees (relative path + kind + file size), and only deletes the source when `_compare_manifests` finds no missing or mismatched entries; otherwise it raises with the source left intact. This closes a data-loss bug where a copy reported success but was silently incomplete.
@@ -152,7 +154,7 @@ Run the test suite with:
 python -m pytest test_claude_mover.py
 ```
 
-`test_claude_mover.py` contains `227` tests across `43` test classes with `93%` line coverage. Coverage is measured via `pytest-cov` (`pip install pytest-cov`).
+`test_claude_mover.py` contains `233` tests across `44` test classes with `93%` line coverage. Coverage is measured via `pytest-cov` (`pip install pytest-cov`).
 
 The uncovered lines (`ensure_parent` interactive prompt, `if __name__ == "__main__"`) require interactive `input()` mocking or direct script execution and are intentionally left for manual verification via `--dry-run`.
 
