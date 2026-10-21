@@ -9,7 +9,7 @@ When a project folder is moved naively (e.g. via Explorer/Finder), its session h
 
 The correct migration order is:
 1. Rename the encoded directory in `~/.claude/projects/` to match the new path.
-2. Rewrite path references inside the `.jsonl` session files.
+2. Rewrite path references inside the `.jsonl` session files, recursively (subagent transcripts live in `<session>/subagents/*.jsonl`; `memory/` is skipped).
 3. Move/rename the actual project folder.
 4. Update any absolute paths in `.claude/settings.json` and `.mcp.json`.
 5. Update path entries in `~/.claude/history.jsonl`.
@@ -62,7 +62,7 @@ The file is organized into clearly delimited sections:
 | **Validation** | `validate_source` / `validate_target` — existence checks with actionable error messages |
 | **Parent directory** | `ensure_parent` — interactive prompt when the target parent is missing |
 | **Backup** | `backup_context` / `restore_backup` / `remove_backup` — safety net around the context rename |
-| **Patching** | `patch_file` (generic), `patch_jsonl` (line-by-line for `.jsonl` files), `app_session_files` (locate the desktop app session store) |
+| **Patching** | `patch_file` (generic), `patch_jsonl` (line-by-line for `.jsonl` files), `session_files` (all transcripts in a context dir, recursive, issue `#29`), `app_session_files` (locate the desktop app session store) |
 | **WSL translation** | `_wsl_endpoint` (WSL UNC → `(distro, linux_path)`), `_drive_to_wsl_mount` (drive path → `/mnt/<d>/…`), `_wsl_path_in_distro` (path as seen inside a given distro) |
 | **Copy verification** | `_manifest_windows` / `_manifest_wsl` / `_parse_find_manifest` (build a `{relpath: (kind, size)}` manifest), `_compare_manifests` / `_verify_or_raise` (confirm every source entry reached the target) |
 | **Directory move** | `_move_directory` — dispatches to `_move_directory_wsl` (native `wsl.exe cp -a` for any WSL endpoint) or robocopy (long-path safety) — both verify before deleting the source; `_run_wsl_bash` (run a bash script in a distro via stdin); `_delete_source` (remove a verified source, non-fatal on lock); `_rmtree_robust` — robocopy /MIR fallback for deletion |
@@ -120,7 +120,7 @@ Examples:
 
 ## Domain knowledge
 
-- `~/.claude/projects/<encoded-path>/` — one directory per project; contains `.jsonl` session files.
+- `~/.claude/projects/<encoded-path>/` — one directory per project; contains `<session>.jsonl` transcripts, nested `<session>/subagents/*.jsonl` subagent transcripts (also carrying `cwd`), and `memory/` (auto memory).
 - Path encoding: every non-alphanumeric character → `-`, case preserved (see the [Path encoding](#path-encoding-drive-letter-and-unc--wsl) section). E.g. `D:\workspace\myapp` → `D--workspace-myapp`.
 - `~/.claude/history.jsonl` — global history index; contains absolute path references that must be rewritten on move.
 - `~/.claude.json` (in the **home directory**, NOT inside `~/.claude/`) — global app config read by the Claude desktop app; stores project settings keyed by path (both backslash and forward-slash forms) and the GitHub repo → local path map. The `backups/` folder inside `~/.claude/` contains timestamped backups of this file made before each write.
@@ -138,7 +138,7 @@ Run the test suite with:
 python -m pytest test_claude_mover.py
 ```
 
-`test_claude_mover.py` contains `198` tests across `39` test classes with `93%` line coverage. Coverage is measured via `pytest-cov` (`pip install pytest-cov`).
+`test_claude_mover.py` contains `201` tests across `40` test classes with `93%` line coverage. Coverage is measured via `pytest-cov` (`pip install pytest-cov`).
 
 The uncovered lines (`ensure_parent` interactive prompt, `if __name__ == "__main__"`) require interactive `input()` mocking or direct script execution and are intentionally left for manual verification via `--dry-run`.
 

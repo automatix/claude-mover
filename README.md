@@ -9,7 +9,7 @@ Claude Code stores session history under `~/.claude/projects/`, using the **abso
 **Claude Mover fixes this** by performing the move in the correct order:
 
 1. **Rename** the context directory in `~/.claude/projects/` to the new encoded path
-2. **Rewrite** all path strings inside the `.jsonl` session files
+2. **Rewrite** all path strings inside the `.jsonl` session files, including subagent transcripts in `<session>/subagents/`
 3. **Move** the project folder itself
 4. **Patch** absolute paths in `.claude/settings.json` and `.mcp.json` inside the project
 5. **Update** path entries in `~/.claude/history.jsonl` and `~/.claude.json`

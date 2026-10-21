@@ -479,6 +479,20 @@ def patch_jsonl(file_path: Path, old_path: Path, new_path: Path, dry_run: bool) 
     return changed
 
 
+def session_files(ctx_dir: Path) -> list[Path]:
+    """Return every transcript (.jsonl) in a context directory, recursively.
+
+    Top-level <session>.jsonl files hold the main conversations; subagent
+    transcripts live in <session>/subagents/*.jsonl and carry cwd as well.
+    The memory/ directory holds user-facing notes, not transcripts, and is
+    left alone.
+    """
+    return sorted(
+        p for p in ctx_dir.rglob("*.jsonl")
+        if p.is_file() and p.relative_to(ctx_dir).parts[0] != "memory"
+    )
+
+
 def app_session_files() -> list[Path]:
     """Return every Claude desktop app per-session metadata file.
 
@@ -845,15 +859,17 @@ def migrate(source: Path, target: Path, dry_run: bool) -> dict:
         else:
             logging.info(f"[DRY RUN] Would rename: {source_ctx} -> {target_ctx}")
 
-        # Step 2: Patch path references in session files
+        # Step 2: Patch path references in session files, including the
+        # subagent transcripts nested under <session>/subagents/ (issue #29).
         ctx_for_sessions = target_ctx if not dry_run else source_ctx
-        jsonl_files = list(ctx_for_sessions.glob("*.jsonl"))
+        jsonl_files = session_files(ctx_for_sessions)
         logging.info(f"Patching {len(jsonl_files)} session file(s) ...")
         for jf in jsonl_files:
             changed = patch_jsonl(jf, source, target, dry_run)
             summary["sessions_migrated"] += 1
             if changed:
-                logging.info(f"  {jf.name}: {changed} line(s) updated")
+                rel = jf.relative_to(ctx_for_sessions)
+                logging.info(f"  {rel}: {changed} line(s) updated")
 
         # Step 3: Move project folder
         logging.info(f"Moving project folder ...")
