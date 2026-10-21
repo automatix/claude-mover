@@ -22,6 +22,10 @@ Claude Code stores session history under `~/.claude/projects/`, using the **abso
 - Python `3.9+`
 - Windows only
 
+### Custom configuration directory
+
+If you run Claude Code with `CLAUDE_CONFIG_DIR`, run Claude Mover from a shell where the same variable is set: every `~/.claude` path above, and `.claude.json`, are then taken from that directory. `CLAUDE_CODE_PROJECT_DIR_NAME` (a fixed project directory name instead of one derived from the path) is not supported; Claude Mover refuses to run while it is set together with `CLAUDE_CONFIG_DIR`.
+
 ## Before you run
 
 **Close every Claude instance first** — the desktop app (including its tray icon) and any running Claude Code CLI or IDE-extension sessions. This is a correctness requirement, not just a precaution, for two independent reasons:

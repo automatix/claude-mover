@@ -1859,6 +1859,25 @@ class TestPrintSummary(unittest.TestCase):
 # main()
 # ===========================================================================
 
+class TestConfigPaths(unittest.TestCase):
+    """Issue #31: CLAUDE_CONFIG_DIR relocates ~/.claude and .claude.json."""
+
+    def test_default_uses_home(self):
+        config_dir, claude_json = claude_mover._config_paths({})
+        self.assertEqual(config_dir, Path.home() / ".claude")
+        self.assertEqual(claude_json, Path.home() / ".claude.json")
+
+    def test_custom_config_dir_holds_claude_json(self):
+        config_dir, claude_json = claude_mover._config_paths(
+            {"CLAUDE_CONFIG_DIR": r"E:\claude-work"})
+        self.assertEqual(config_dir, Path(r"E:\claude-work"))
+        self.assertEqual(claude_json, Path(r"E:\claude-work\.claude.json"))
+
+    def test_empty_value_falls_back_to_default(self):
+        config_dir, _ = claude_mover._config_paths({"CLAUDE_CONFIG_DIR": ""})
+        self.assertEqual(config_dir, Path.home() / ".claude")
+
+
 class TestMain(unittest.TestCase):
 
     _SUMMARY = {
@@ -1893,6 +1912,29 @@ class TestMain(unittest.TestCase):
             with self.assertRaises(SystemExit) as ctx:
                 claude_mover.main()
         self.assertEqual(ctx.exception.code, 1)
+
+    def test_refuses_fixed_project_dir_name(self):
+        """Issue #31: a fixed project directory name makes a rename wrong."""
+        env = {"CLAUDE_CONFIG_DIR": r"C:\cfg", "CLAUDE_CODE_PROJECT_DIR_NAME": "work"}
+        with patch("sys.argv", ["claude-mover", r"D:\workspace\src", r"D:\workspace\tgt"]), \
+             patch.dict(os.environ, env), \
+             patch("claude_mover.setup_logging", return_value=Path(r"C:\fake.log")), \
+             patch("claude_mover.migrate") as mock_migrate:
+            with self.assertRaises(SystemExit) as ctx:
+                claude_mover.main()
+        self.assertEqual(ctx.exception.code, 1)
+        mock_migrate.assert_not_called()
+
+    def test_project_dir_name_alone_is_ignored(self):
+        """Claude Code ignores CLAUDE_CODE_PROJECT_DIR_NAME without CLAUDE_CONFIG_DIR."""
+        with patch("sys.argv", ["claude-mover", r"D:\workspace\src", r"D:\workspace\tgt"]), \
+             patch.dict(os.environ, {"CLAUDE_CODE_PROJECT_DIR_NAME": "work"}), \
+             patch("claude_mover.setup_logging", return_value=Path(r"C:\fake.log")), \
+             patch("claude_mover.migrate", return_value=self._SUMMARY) as mock_migrate, \
+             patch("claude_mover.print_summary"):
+            os.environ.pop("CLAUDE_CONFIG_DIR", None)
+            claude_mover.main()
+        mock_migrate.assert_called_once()
 
     def test_system_exit_propagates(self):
         with patch("sys.argv", ["claude-mover", r"D:\workspace\src", r"D:\workspace\tgt"]), \
