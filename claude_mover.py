@@ -47,6 +47,11 @@ CHECKPOINT_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / APP_NA
 # which is still searched as a fallback (issue #28).
 APP_DATA_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Claude-Data"
 APP_DATA_SESSION_GLOB = "claude_*/claude-code-sessions/**/local_*.json"
+# Further desktop app files keyed by absolute project path (issue #32):
+# per-folder session presets and the recently used folders in preferences.
+# git-shadow/ and git-worktrees.json are caches the app rebuilds and are
+# deliberately left alone.
+APP_DATA_CONFIG_FILES = ("ccd-session-presets.json", "claude_desktop_config.json")
 APP_PACKAGES_DIR =Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Packages"
 APP_SESSION_GLOB = "Claude_*/LocalCache/Roaming/Claude/claude-code-sessions/**/local_*.json"
 
@@ -545,6 +550,16 @@ def session_files(ctx_dir: Path) -> list[Path]:
     )
 
 
+def app_config_files() -> list[Path]:
+    """Return the desktop app's path-keyed config files (see APP_DATA_CONFIG_FILES)."""
+    if not APP_DATA_DIR.exists():
+        return []
+    return sorted(
+        p for name in APP_DATA_CONFIG_FILES
+        for p in APP_DATA_DIR.glob(f"claude_*/{name}") if p.is_file()
+    )
+
+
 def app_session_files() -> list[Path]:
     """Return every Claude desktop app per-session metadata file.
 
@@ -975,6 +990,12 @@ def migrate(source: Path, target: Path, dry_run: bool) -> dict:
                     summary["app_sessions_patched"] += 1
                     summary["config_files_patched"].append(str(sf))
                     logging.info(f"  {sf.name}: cwd/originCwd updated")
+
+        # Further path-keyed desktop app files: session presets, recent folders.
+        for cf in app_config_files():
+            if patch_file(cf, source, target, dry_run):
+                summary["config_files_patched"].append(str(cf))
+                logging.info(f"Patched: {cf}")
 
         # Step 8: Remove backup
         remove_backup(backup, dry_run)
