@@ -457,6 +457,47 @@ class TestPatchContentPathBoundary(unittest.TestCase):
                                 r"D:\workspace\sandbox\zerobox2"])
 
 
+class TestPatchContentEscapingDepth(unittest.TestCase):
+    """Issue #46: backslash paths escaped more than once are rewritten too."""
+
+    OLD = Path(r"C:\Users\automatix\Desktop\system-transfer")
+    NEW = Path(r"D:\system-transfer")
+
+    def test_each_depth_rewritten_at_same_depth(self):
+        for depth in (1, 2, 4, 8):
+            sep = "\\" * depth
+            old = sep.join(["C:", "Users", "automatix", "Desktop", "system-transfer", "x.ps1"])
+            new = sep.join(["D:", "system-transfer", "x.ps1"])
+            with self.subTest(depth=depth):
+                self.assertEqual(patch_content(f'"{old}"', self.OLD, self.NEW), f'"{new}"')
+
+    def test_permission_rule_with_nested_command(self):
+        """A Bash command stored as a string inside a JSON permission rule."""
+        rule = json.dumps({"allow": [
+            'Bash(powershell -File "' + "C:\\\\Users\\\\automatix\\\\Desktop"
+            "\\\\system-transfer\\\\scripts\\\\run.ps1" + '")']})
+        data = json.loads(patch_content(rule, self.OLD, self.NEW))
+        self.assertEqual(data["allow"][0],
+                         'Bash(powershell -File "D:\\\\system-transfer\\\\scripts\\\\run.ps1")')
+
+    def test_mixed_depths_in_one_path_not_matched(self):
+        text = "C:\\\\Users\\automatix\\Desktop\\system-transfer"
+        self.assertEqual(patch_content(text, self.OLD, self.NEW), text)
+
+    def test_unc_source_escaped_twice(self):
+        old = Path(r"\\wsl.localhost\ubuntu\home\u\proj")
+        new = Path(r"D:\proj")
+        text = json.dumps(json.dumps({"cwd": r"\\wsl.localhost\ubuntu\home\u\proj\a"}))
+        data = json.loads(json.loads(patch_content(text, old, new)))
+        self.assertEqual(data["cwd"], r"D:\proj\a")
+
+    def test_drive_to_unc_keeps_depth(self):
+        line = json.dumps({"cwd": r"D:\workspace\alpha"})
+        new = Path(r"\\wsl.localhost\ubuntu\home\u\alpha")
+        data = json.loads(patch_content(line, Path(r"D:\workspace\alpha"), new))
+        self.assertEqual(data["cwd"], r"\\wsl.localhost\ubuntu\home\u\alpha")
+
+
 class TestPatchContentRegressionJsonDoubleBackslash(unittest.TestCase):
     """Explicit regression test for the JSON-encoded double-backslash bug.
 
