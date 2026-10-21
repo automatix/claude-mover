@@ -17,10 +17,25 @@ from pathlib import Path
 from typing import Optional
 
 APP_NAME = "ClaudeMover"
-CLAUDE_DIR = Path.home() / ".claude"
+
+
+def _config_paths(env=os.environ) -> tuple[Path, Path]:
+    """Return (config dir, global app config file) as Claude Code resolves them.
+
+    CLAUDE_CONFIG_DIR replaces ~/.claude, and .claude.json then lives inside
+    that directory instead of in the home directory (verified with Claude
+    Code 2.1.296; issue #31).
+    """
+    custom = env.get("CLAUDE_CONFIG_DIR")
+    if custom:
+        config_dir = Path(custom).expanduser()
+        return config_dir, config_dir / ".claude.json"
+    return Path.home() / ".claude", Path.home() / ".claude.json"
+
+
+CLAUDE_DIR, CLAUDE_JSON = _config_paths()   # CLAUDE_JSON: project list, GitHub repo map
 PROJECTS_DIR = CLAUDE_DIR / "projects"
 HISTORY_FILE = CLAUDE_DIR / "history.jsonl"
-CLAUDE_JSON = Path.home() / ".claude.json"   # global app config (project list, GitHub repo map)
 LOG_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / APP_NAME / "logs"
 CHECKPOINT_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / APP_NAME / "checkpoints"
 
@@ -1037,6 +1052,20 @@ def main() -> None:
     args = parser.parse_args()
 
     log_file = setup_logging(args.dry_run)
+
+    # With both variables set, Claude Code uses a fixed project directory name
+    # instead of one derived from the path, so renaming the context directory
+    # would orphan the sessions (issue #31).
+    if os.environ.get("CLAUDE_CONFIG_DIR") and os.environ.get("CLAUDE_CODE_PROJECT_DIR_NAME"):
+        logging.error(
+            "CLAUDE_CODE_PROJECT_DIR_NAME is set: Claude Code stores this project's "
+            "sessions under a fixed name, not one derived from the path. "
+            "Claude Mover does not support this; unset the variable or move the "
+            "folder manually."
+        )
+        sys.exit(1)
+    if os.environ.get("CLAUDE_CONFIG_DIR"):
+        logging.info(f"Using CLAUDE_CONFIG_DIR: {CLAUDE_DIR}")
 
     source = normalize_path(args.source)
     target = normalize_path(args.target)
