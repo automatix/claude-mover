@@ -152,7 +152,7 @@ Yes, fully. Claude Code will find all previous sessions at the new path exactly 
 
 ### Does this work with the Claude desktop app and IDE extensions?
 
-Claude Code CLI, the VS Code and JetBrains extensions, and the Claude desktop app all share the same `~/.claude/projects/` store for session history. The Claude desktop app additionally keeps its own per-session `cwd`/`originCwd` pointers in a separate store (`%LOCALAPPDATA%\Claude-Data\claude_*\claude-code-sessions\`; older app versions used `%LOCALAPPDATA%\Packages\Claude_*\...\claude-code-sessions\`, which is still searched), which is what its trust dialog, "Show in Explorer", and "Copy path" rely on. Claude Mover patches that store too, so a move is transparent to all of them. If neither location exists, it logs a warning instead of silently skipping the step. It also rewrites the app's per-folder session presets (`ccd-session-presets.json`) and its list of recently used folders (`claude_desktop_config.json`). The app's git caches (`git-shadow\`, `git-worktrees.json`) are left alone; the app rebuilds them. **Note:** the desktop app must be fully closed when you run the move, otherwise it rewrites these pointers from memory and reverts the change.
+Claude Code CLI, the VS Code and JetBrains extensions, and the Claude desktop app all share the same `~/.claude/projects/` store for session history. The Claude desktop app additionally keeps its own per-session `cwd`/`originCwd` pointers in a separate store (`%LOCALAPPDATA%\Claude-Data\claude_*\claude-code-sessions\`; older app versions used `%LOCALAPPDATA%\Packages\Claude_*\...\claude-code-sessions\`, which is still searched), which is what its trust dialog, "Show in Explorer", and "Copy path" rely on. Claude Mover patches that store too, so a move is transparent to all of them. If neither location exists, it logs a warning instead of silently skipping the step. It also rewrites the app's per-folder session presets (`ccd-session-presets.json`) and its list of recently used folders (`claude_desktop_config.json`). For Cowork it rewrites the session metadata (`local-agent-mode-sessions\<account>\<group>\local_*.json`) and the space and scheduled task definitions (`spaces.json`, `remote-session-spaces.json`, `scheduled-tasks.json`); Cowork's own transcripts and its audit trail (`audit.jsonl`) are never touched. The app's git caches (`git-shadow\`, `git-worktrees.json`) are left alone; the app rebuilds them. **Note:** the desktop app must be fully closed when you run the move, otherwise it rewrites these pointers from memory and reverts the change.
 
 It has no effect on **Claude.ai** (the web app) — web conversations are stored server-side and are unrelated to the local project store.
 
@@ -208,7 +208,7 @@ pip install pytest-cov
 python -m pytest test_claude_mover.py --cov=claude_mover --cov-report=term-missing
 ```
 
-The test suite contains `233` tests across `44` test classes with `93%` line coverage.
+The test suite contains `234` tests across `44` test classes with `93%` line coverage.
 
 ## Logs
 

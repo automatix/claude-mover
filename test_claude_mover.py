@@ -636,6 +636,21 @@ class TestAppSessionFiles(unittest.TestCase):
         self.assertEqual(sorted(found),
                          ["ccd-session-presets.json", "claude_desktop_config.json"])
 
+    def test_cowork_metadata_found_transcripts_and_audit_excluded(self):
+        """Issue #52: Cowork session metadata and spaces, but not its logs."""
+        data = self.tmp / "Claude-Data"
+        grp = _make_dir(data, "claude_x", "local-agent-mode-sessions", "acct", "grp")
+        for name in ("local_aaa.json", "spaces.json", "remote-session-spaces.json",
+                     "scheduled-tasks.json", "cowork_settings.json"):
+            _write(grp / name, "{}")
+        _write(grp / "local_aaa" / "audit.jsonl", "{}\n")
+        _write(grp / "local_aaa" / ".claude" / "projects" / "k" / "s.jsonl", "{}\n")
+        _write(grp / "local_aaa" / ".claude.json", "{}")
+        with patch.object(claude_mover, "APP_DATA_DIR", data):
+            found = sorted(p.name for p in claude_mover.app_config_files())
+        self.assertEqual(found, ["local_aaa.json", "remote-session-spaces.json",
+                                 "scheduled-tasks.json", "spaces.json"])
+
     def test_app_config_files_empty_without_data_dir(self):
         with patch.object(claude_mover, "APP_DATA_DIR", self.tmp / "nope"):
             self.assertEqual(claude_mover.app_config_files(), [])

@@ -52,6 +52,16 @@ APP_DATA_SESSION_GLOB = "claude_*/claude-code-sessions/**/local_*.json"
 # git-shadow/ and git-worktrees.json are caches the app rebuilds and are
 # deliberately left alone.
 APP_DATA_CONFIG_FILES = ("ccd-session-presets.json", "claude_desktop_config.json")
+# Cowork store (issue #52): per-session metadata (cwd, userSelectedFolders,
+# fsDetectedFiles) and the space / scheduled task definitions sit directly in
+# local-agent-mode-sessions\<account>\<group>\. Cowork's own transcripts and
+# audit.jsonl (an audit trail, never to be rewritten) lie deeper and are
+# deliberately excluded.
+APP_COWORK_GLOBS = tuple(
+    f"claude_*/local-agent-mode-sessions/*/*/{name}"
+    for name in ("local_*.json", "spaces.json", "remote-session-spaces.json",
+                 "scheduled-tasks.json")
+)
 APP_PACKAGES_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Packages"
 APP_SESSION_GLOB = "Claude_*/LocalCache/Roaming/Claude/claude-code-sessions/**/local_*.json"
 
@@ -602,13 +612,14 @@ def session_files(ctx_dir: Path) -> list[Path]:
 
 
 def app_config_files() -> list[Path]:
-    """Return the desktop app's path-keyed config files (see APP_DATA_CONFIG_FILES)."""
+    """Return the desktop app's path-keyed config files.
+
+    See APP_DATA_CONFIG_FILES and the Cowork store APP_COWORK_GLOBS.
+    """
     if not APP_DATA_DIR.exists():
         return []
-    return sorted(
-        p for name in APP_DATA_CONFIG_FILES
-        for p in APP_DATA_DIR.glob(f"claude_*/{name}") if p.is_file()
-    )
+    patterns = [f"claude_*/{name}" for name in APP_DATA_CONFIG_FILES] + list(APP_COWORK_GLOBS)
+    return sorted({p for pattern in patterns for p in APP_DATA_DIR.glob(pattern) if p.is_file()})
 
 
 def app_session_files() -> list[Path]:
