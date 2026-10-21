@@ -397,15 +397,40 @@ def _path_variants(path: Path) -> list[str]:
 _PATH_END = r"(?![\w\-]|\.[\w\-]| \w)"
 
 
+def _backslash_pattern(path_str: str) -> str:
+    """Regex for a backslash path at any escaping depth (issue #46).
+
+    Every backslash of path_str stands for one separator. The first separator
+    captures the run of backslashes found in the text (1 raw, 2 JSON-encoded,
+    4 for a command string inside JSON, ...); every further one must repeat
+    exactly that run, so the depth is consistent within one path.
+    """
+    parts = [re.escape(p) for p in path_str.split("\\")]
+    pattern = parts[0]
+    for i, part in enumerate(parts[1:]):
+        pattern += (r"(\\+)" if i == 0 else r"\1") + part
+    return pattern
+
+
 def patch_content(content: str, old_path: Path, new_path: Path) -> str:
     """Replace all known representations of old_path with new_path in content."""
     old_variants = _path_variants(old_path)
     new_variants = _path_variants(new_path)
+    json_encoded = old_variants[5]
 
     result = content
     for old_v, new_v in zip(old_variants, new_variants):
-        result = re.sub(re.escape(old_v) + _PATH_END, lambda _: new_v, result,
-                        flags=re.IGNORECASE)
+        if "\\" in old_v:
+            if old_v == json_encoded:
+                continue  # covered by the depth-agnostic match of variant 0
+            result = re.sub(
+                _backslash_pattern(old_v) + _PATH_END,
+                lambda m, nv=new_v: nv.replace("\\", m.group(1)),
+                result, flags=re.IGNORECASE,
+            )
+        else:
+            result = re.sub(re.escape(old_v) + _PATH_END, lambda _, nv=new_v: nv,
+                            result, flags=re.IGNORECASE)
     return result
 
 
