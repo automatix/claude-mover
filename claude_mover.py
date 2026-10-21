@@ -52,7 +52,7 @@ APP_DATA_SESSION_GLOB = "claude_*/claude-code-sessions/**/local_*.json"
 # git-shadow/ and git-worktrees.json are caches the app rebuilds and are
 # deliberately left alone.
 APP_DATA_CONFIG_FILES = ("ccd-session-presets.json", "claude_desktop_config.json")
-APP_PACKAGES_DIR =Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Packages"
+APP_PACKAGES_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Packages"
 APP_SESSION_GLOB = "Claude_*/LocalCache/Roaming/Claude/claude-code-sessions/**/local_*.json"
 
 
