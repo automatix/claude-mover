@@ -274,3 +274,17 @@
 - Tests `227`, Abdeckung `93%`.
 
 **Result:** Release `v0.2.2`. `history.jsonl`, `~/.claude.json` und die Transkripte von `system-transfer` bleiben CRLF (funktional unkritisch).
+
+## `2026-10-22` – `zerobox`-Move geprüft: Desktop-App hat zurückgeschrieben; Fixes #51–#53, Release `v0.3.0`
+
+**Request:** `D:\workspace\sandbox\zerobox` → `D:\workspace\tools\zerobox` prüfen. User-Test: CLI `--resume` OK, Desktop-App zeigt weiter `D:\workspace\sandbox` (FAIL).
+
+**Done:**
+- Ursache: Desktop-App lief während des Moves (seit Vorabend). Mover hatte um `01:03` alles korrekt gepatcht; App schrieb `01:10`–`01:12` ihren Speicher zurück (`2` `local_*.json`, `claude_desktop_config.json`) und **kopierte die offene Session byte-identisch unter den alten Key** zurück. Zusätzlich unbekannter Store: Cowork `local-agent-mode-sessions`.
+- **`#51`** Real-Run bricht ab, solange die Desktop-App läuft (`Get-CimInstance`, Erkennung über Installationspfad); CLI-Prozesse und Dry-Runs nur Warnung.
+- **`#52`** Cowork: `local_*.json`, `spaces.json`, `remote-session-spaces.json`, `scheduled-tasks.json` unter `<account>\<group>\` werden gepatcht; `audit.jsonl` und Cowork-Transkripte bewusst nicht.
+- **`#53`** `--repatch <alt> <neu>`: nur Referenzen neu schreiben; entfernt ein Duplikat-Session-Verzeichnis unter dem alten Key nur bei byte-identischem Inhalt.
+- Nebenbei: fehlendes Leerzeichen aus `#28` korrigiert. `Local Storage\leveldb` der App enthält alten Pfad, nicht sicher patchbar.
+- Tests `244`, Abdeckung `94%`.
+
+**Result:** Release `v0.3.0`. Reparatur von `zerobox` per `--repatch` steht aus (Desktop-App muss dafür beendet sein).

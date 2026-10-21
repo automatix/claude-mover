@@ -219,7 +219,7 @@ pip install pytest-cov
 python -m pytest test_claude_mover.py --cov=claude_mover --cov-report=term-missing
 ```
 
-The test suite contains `244` tests across `45` test classes with `93%` line coverage.
+The test suite contains `244` tests across `45` test classes with `94%` line coverage.
 
 ## Logs
 
