@@ -56,11 +56,15 @@ from claude_mover import (
     validate_target,
 )
 
+_REAL_RUNNING_CLAUDE = claude_mover._running_claude_processes
+
 # Keep every test away from the real desktop app store of the machine running
 # the suite; tests that exercise it patch these to a temporary directory.
 _MODULE_PATCHES = [
     patch.object(claude_mover, "APP_DATA_DIR", Path(r"Z:\nonexistent\Claude-Data")),
     patch.object(claude_mover, "APP_PACKAGES_DIR", Path(r"Z:\nonexistent\Packages")),
+    # Never see the real Claude processes of the machine running the suite.
+    patch.object(claude_mover, "_running_claude_processes", return_value=[]),
 ]
 
 
@@ -2017,6 +2021,60 @@ class TestPrintSummary(unittest.TestCase):
 # ===========================================================================
 # main()
 # ===========================================================================
+
+class TestRunningClaude(unittest.TestCase):
+    """Issue #51: a running desktop app reverts the patches; refuse to run."""
+
+    APP = (101, r"C:\Program Files\WindowsApps\Claude_3.1623.1.0_x64__pzs8sxrjxfjjc\app\claude.exe")
+    APP_CLI = (102, r"C:\Users\x\AppData\Local\Claude-Data\claude_pzs8sxrjxfjjc\claude-code\2.1.296\claude.exe")
+    CLI = (201, r"C:\Users\x\AppData\Local\Microsoft\WinGet\Packages\Anthropic.ClaudeCode\claude.exe")
+
+    def _check(self, procs, dry_run=False):
+        with patch.object(claude_mover, "_running_claude_processes", return_value=procs):
+            claude_mover.check_running_claude(dry_run)
+
+    def test_desktop_app_aborts_real_run(self):
+        for proc in (self.APP, self.APP_CLI):
+            with self.subTest(proc=proc[1]):
+                with self.assertRaises(SystemExit) as ctx:
+                    self._check([proc])
+                self.assertEqual(ctx.exception.code, 1)
+
+    def test_desktop_app_only_warns_in_dry_run(self):
+        with patch("claude_mover.logging.warning") as warn:
+            self._check([self.APP], dry_run=True)
+        self.assertIn("desktop app is running", str(warn.call_args))
+
+    def test_cli_only_warns(self):
+        with patch("claude_mover.logging.warning") as warn:
+            self._check([self.CLI])
+        self.assertIn("CLI process(es) running (PID 201)", str(warn.call_args))
+
+    def test_nothing_running_is_silent(self):
+        with patch("claude_mover.logging.warning") as warn:
+            self._check([])
+        warn.assert_not_called()
+
+    def test_process_list_parsing(self):
+        out = json.dumps([{"ProcessId": 7, "ExecutablePath": r"C:\a\claude.exe"},
+                          {"ProcessId": 8, "ExecutablePath": None}])
+        done = MagicMock(returncode=0, stdout=out)
+        with patch.object(claude_mover, "_running_claude_processes", _REAL_RUNNING_CLAUDE), \
+             patch("claude_mover.subprocess.run", return_value=done):
+            self.assertEqual(claude_mover._running_claude_processes(),
+                             [(7, r"C:\a\claude.exe"), (8, "")])
+
+    def test_process_list_single_object_and_failure(self):
+        single = MagicMock(returncode=0, stdout='{"ProcessId": 5, "ExecutablePath": "x"}')
+        with patch.object(claude_mover, "_running_claude_processes", _REAL_RUNNING_CLAUDE):
+            with patch("claude_mover.subprocess.run", return_value=single):
+                self.assertEqual(claude_mover._running_claude_processes(), [(5, "x")])
+            with patch("claude_mover.subprocess.run", side_effect=OSError):
+                self.assertEqual(claude_mover._running_claude_processes(), [])
+            with patch("claude_mover.subprocess.run",
+                       return_value=MagicMock(returncode=0, stdout="")):
+                self.assertEqual(claude_mover._running_claude_processes(), [])
+
 
 class TestConfigPaths(unittest.TestCase):
     """Issue #31: CLAUDE_CONFIG_DIR relocates ~/.claude and .claude.json."""

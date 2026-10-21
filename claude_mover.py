@@ -897,6 +897,79 @@ def _rmtree_robust(path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Running Claude instances (issue #51)
+# ---------------------------------------------------------------------------
+
+# Install locations of the Claude desktop app: the MSIX package, its data
+# directory (bundled CLI), and the non-MSIX installer.
+_DESKTOP_APP_PATH_MARKERS = ("\\windowsapps\\claude_", "\\claude-data\\", "\\anthropicclaude\\")
+
+_PS_LIST_CLAUDE = (
+    "Get-CimInstance Win32_Process -Filter \"Name='claude.exe'\" | "
+    "Select-Object ProcessId, ExecutablePath | ConvertTo-Json -Compress"
+)
+
+
+def _running_claude_processes() -> list[tuple[int, str]]:
+    """Return (pid, executable path) of every running claude.exe.
+
+    Returns an empty list when the process list cannot be read; the check is
+    a safety net, not a precondition for the tool to work.
+    """
+    try:
+        proc = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", _PS_LIST_CLAUDE],
+            capture_output=True, text=True, timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    out = proc.stdout.strip()
+    if proc.returncode != 0 or not out:
+        return []
+    try:
+        data = json.loads(out)
+    except json.JSONDecodeError:
+        return []
+    if isinstance(data, dict):
+        data = [data]
+    return [(int(p.get("ProcessId") or 0), p.get("ExecutablePath") or "") for p in data]
+
+
+def _is_desktop_app(exe_path: str) -> bool:
+    lowered = exe_path.lower()
+    return any(marker in lowered for marker in _DESKTOP_APP_PATH_MARKERS)
+
+
+def check_running_claude(dry_run: bool) -> None:
+    """Abort a real run while the Claude desktop app is running.
+
+    The desktop app keeps its session store and config in memory and writes
+    them back later, reverting the path patches (observed: minutes after a
+    move). Other claude.exe processes (CLI sessions) only produce a warning:
+    the mover may itself be started from one, and no revert by the CLI has
+    been observed. A dry run only warns.
+    """
+    procs = _running_claude_processes()
+    app = sorted(pid for pid, path in procs if _is_desktop_app(path))
+    cli = sorted(pid for pid, path in procs if not _is_desktop_app(path))
+    if cli:
+        logging.warning(
+            f"{len(cli)} Claude Code CLI process(es) running (PID {', '.join(map(str, cli))}). "
+            "Close sessions of the moved project before continuing."
+        )
+    if not app:
+        return
+    msg = (f"The Claude desktop app is running (PID {', '.join(map(str, app))}). "
+           "It would write its old state back and revert the path changes. "
+           "Quit it completely, including the tray icon, then run again.")
+    if dry_run:
+        logging.warning(msg)
+        return
+    logging.error(msg)
+    sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
 # Checkpoint (migration state for --resume)
 # ---------------------------------------------------------------------------
 
@@ -1151,6 +1224,8 @@ def main() -> None:
             logging.info(
                 f"Normalized WSL {label} to the desktop app's canonical form: {resolved}"
             )
+
+    check_running_claude(args.dry_run)
 
     if args.resume and not args.dry_run:
         cp = _read_checkpoint(source)
