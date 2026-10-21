@@ -484,6 +484,25 @@ class TestPatchFile(unittest.TestCase):
     OLD = Path(r"D:\workspace\myapp")
     NEW = Path(r"D:\workspace\newapp")
 
+    def test_lf_line_endings_preserved(self):
+        """Issue #44: LF files must not be converted to CRLF on Windows."""
+        f = self.tmp / "settings.json"
+        f.write_bytes(b'{\n  "path": "D:\\\\workspace\\\\myapp"\n}\n')
+        patch_file(f, self.OLD, self.NEW, dry_run=False)
+        self.assertEqual(f.read_bytes(), b'{\n  "path": "D:\\\\workspace\\\\newapp"\n}\n')
+
+    def test_crlf_line_endings_preserved(self):
+        f = self.tmp / "settings.json"
+        f.write_bytes(b'{\r\n  "path": "D:/workspace/myapp"\r\n}\r\n')
+        patch_file(f, self.OLD, self.NEW, dry_run=False)
+        self.assertEqual(f.read_bytes(), b'{\r\n  "path": "D:/workspace/newapp"\r\n}\r\n')
+
+    def test_jsonl_line_endings_preserved(self):
+        f = self.tmp / "s.jsonl"
+        f.write_bytes(b'{"cwd":"D:/workspace/myapp"}\n{"x":1}\n')
+        patch_jsonl(f, self.OLD, self.NEW, dry_run=False)
+        self.assertEqual(f.read_bytes(), b'{"cwd":"D:/workspace/newapp"}\n{"x":1}\n')
+
     def test_patches_content_and_writes_to_file(self):
         f = self.tmp / "settings.json"
         _write(f, json.dumps({"path": str(self.OLD)}) + "\n")
