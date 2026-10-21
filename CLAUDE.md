@@ -23,7 +23,7 @@ The correct migration order is:
 
 ## Workflow
 
-After every PR is merged: merge it via `gh pr merge --squash --delete-branch` (or `--merge` if squash is not appropriate), then switch the local working copy back to `master` and pull.
+After every PR is merged: merge it via `gh pr merge --squash` (or `--merge` if squash is not appropriate), then switch the local working copy back to `master` and pull. Keep merged branches, both remote and local; delete a branch only when explicitly asked.
 
 ## Commands
 
